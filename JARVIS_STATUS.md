@@ -4,7 +4,7 @@
 This is intended to be an action-first personal assistant, not a general question-and-answer chatbot. The home screen is a **native amber/orange reactor HUD**, with state indicators, a tappable activation core and a real operation timeline. OpenCode is intended to stay under the surface as the planning, reasoning and tool engine. The conventional OpenCode interface is retained under ENGINE only for configuration and diagnostics.
 
 ## Implemented code (NOT device verified)
-- Orange/amber charcoal JarvisDashboard with segmented reactor rings, activity/operations console and listening/working/speaking status.
+- Orange/amber charcoal JarvisDashboard with a frame-animated original reactor HUD (opposed rotating segmented rings, orbital sweep, 72 responsive radial signal bars, bloom, breathing core), activity/operations console and listening/working/speaking status. Rendering uses native Android Canvas, no remote animation dependency.
 - Foreground speech transcription via Android SpeechRecognizer and responses via Android TextToSpeech.
 - JarvisActionRouter for real system intents: camera, settings, dialer, maps/navigation, browser, web search, SMS draft, and alarm creation/review.
 - Voice controls and Android permissions.
@@ -26,3 +26,6 @@ Switch to branch `feature/jarvis-assistant-v1` on GitHub Actions and build an ex
 
 ## Security
 No personal GitHub access token is required in source files. Any token previously posted in chat should be revoked, and a new token (if needed) stored only through provider-approved credentials management.
+
+## Cinematic HUD note
+The user supplied an animated Tumblr GIF as a visual reference. Remote fetch was unavailable in this development session, so the UI is an original interpretation, **not** a verified frame-for-frame replica. Animation is driven by Android View redraw, pauses when detached/hidden, and reflects the assistant's current recognition/response state. It requires profiling on the target Android device. This is not an AI simulation; it is UI presentation attached to the existing experimental voice/actions runtime.
