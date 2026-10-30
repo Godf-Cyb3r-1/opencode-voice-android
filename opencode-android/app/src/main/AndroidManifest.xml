@@ -3,6 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="internalOnly">
 
+    <!-- Android 11+ package visibility for user-installed TTS engines. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
