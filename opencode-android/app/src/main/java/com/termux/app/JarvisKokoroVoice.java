@@ -41,6 +41,7 @@ final class JarvisKokoroVoice {
     private volatile boolean closed;
     private volatile int speaker = 10; // bm_lewis, lower male English voice
     private volatile float speed = .97f;
+    private volatile int threads = 4;
     private OfflineTts model;
     private AudioTrack player;
 
@@ -70,7 +71,7 @@ final class JarvisKokoroVoice {
                 .setDataDir(new File(root,"espeak-ng-data").getAbsolutePath())
                 .build();
             OfflineTtsModelConfig modelConfig = OfflineTtsModelConfig.builder()
-                .setKokoro(kokoro).setNumThreads(2).setDebug(false).build();
+                .setKokoro(kokoro).setNumThreads(threads).setDebug(false).build();
             OfflineTtsConfig config = OfflineTtsConfig.builder().setModel(modelConfig).build();
             model = new OfflineTts(config);
             ready = true;
@@ -112,23 +113,37 @@ final class JarvisKokoroVoice {
         }
     }
 
+    // Add a sentence to the current uninterrupted assistant turn.
+    // A queued fragment must share the original speech generation, not cancel it.
+    void append(String text, String id) {
+        if (!ready || closed || text == null || text.trim().isEmpty()) return;
+        final int ticket = generation.get();
+        worker.execute(() -> {
+            if (ticket != generation.get() || closed) return;
+            playPhrases(text, id, ticket, false);
+        });
+    }
+
     void speak(String text, String id) {
         if (!ready || closed) {
             main.post(()->events.failed(id, "Kokoro neural model not ready"));
             return;
         }
         final int ticket = generation.incrementAndGet();
-        worker.execute(()-> {
+        worker.execute(() -> playPhrases(text, id, ticket, true));
+    }
+
+    private void playPhrases(String text, String id, int ticket, boolean announceStart) {
             try {
                 if (ticket!=generation.get() || closed) return;
-                main.post(()->events.started(id));
+                if (announceStart) main.post(()->events.started(id));
                 for (String phrase:JarvisSpeechStyle.chunks(text)) {
                     if (closed || ticket!=generation.get()) return;
                     GenerationConfig cfg=new GenerationConfig();
                     cfg.setSid(speaker);
                     cfg.setSpeed(speed);
                     cfg.setSilenceScale(.22f);
-                    GeneratedAudio audio=model.generateWithConfigAndCallback(phrase,cfg,samples->{});
+                    GeneratedAudio audio=model.generateWithConfig(phrase,cfg);
                     float[] samples=audio.getSamples();
                     int sampleRate=audio.getSampleRate();
                     if (samples==null || samples.length==0) throw new IllegalStateException("Kokoro produced empty audio");
@@ -173,12 +188,11 @@ final class JarvisKokoroVoice {
                     try {track.pause();track.flush();}catch(Exception ignored){}
                     track.release();
                 }
-                if(!closed && ticket==generation.get()) main.post(()->events.completed(id));
+                if(!closed && ticket==generation.get() && announceStart) main.post(()->events.completed(id));
             } catch(Throwable e) {
                 String reason=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
                 main.post(()->events.failed(id,reason));
             }
-        });
     }
 
     void stop() {
