@@ -22,6 +22,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default package list includes the removed "tools"
+          # package, which makes sdkmanager fail on current runners.
+          packages: platform-tools
       - name: Install required SDK and NDK
         run: |
           yes | sdkmanager --licenses >/dev/null || true
