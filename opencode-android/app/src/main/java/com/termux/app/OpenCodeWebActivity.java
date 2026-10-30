@@ -509,7 +509,13 @@ public final class OpenCodeWebActivity extends Activity {
                     });
                 }
             }
-            @Override public void onState(String state) { updateJarvisLabel(state); }
+            @Override public void onPartial(String partial) {
+                if (dashboard != null) dashboard.showLiveTranscript(partial);
+            }
+            @Override public void onState(String state) {
+                updateJarvisLabel(state);
+                if (dashboard != null && !"hearing".equals(state)) dashboard.clearLiveTranscript();
+            }
         });
         jarvisButton = new Button(this);
         jarvisButton.setText("◎");
