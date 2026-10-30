@@ -2,7 +2,7 @@ name: Build OpenCode Voice Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, "feature/jarvis-assistant-v1"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -34,17 +34,29 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3 dpkg-dev unzip zip
+      - name: Prepare real offline Kokoro neural model
+        run: |
+          chmod +x scripts/prepare_kokoro.sh
+          bash scripts/prepare_kokoro.sh
+          test -s app/src/main/assets/kokoro-en-v0_19/model.onnx
+          test -s app/src/main/assets/kokoro-en-v0_19/voices.bin
+          test -s app/src/main/assets/kokoro-en-v0_19/tokens.txt
+          test -d app/src/main/assets/kokoro-en-v0_19/espeak-ng-data
       - name: Build signed debug APK
         run: |
           chmod +x gradlew scripts/build.sh
           bash scripts/build.sh
+          for apk in app/build/outputs/apk/debug/*.apk; do
+            unzip -l "$apk" | grep -q "assets/kokoro-en-v0_19/model.onnx" || { echo "Kokoro model missing from $apk"; exit 1; }
+            echo "Verified Kokoro weights packaged in $apk"
+          done
       - name: List generated APKs
         if: always()
         run: find app/build/outputs/apk -name '*.apk' -type f -print || true
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: OpenCode-Voice-Android-APK
+          name: Jarvis-Kokoro-Offline-Android-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
