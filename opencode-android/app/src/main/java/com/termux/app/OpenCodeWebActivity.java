@@ -446,7 +446,7 @@ public final class OpenCodeWebActivity extends Activity {
         initializeTts(OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", ""));
         supertonic = new JarvisSupertonicVoice(this, new JarvisSupertonicVoice.Events() {
             @Override public void ready() {
-                if (dashboard != null) dashboard.addEvent("SUPERTONIC 82M  •  Native neural voice ready (offline).");
+                if (dashboard != null) dashboard.addEvent("SUPERTONIC 3  •  Native neural voice ready (offline).");
                 if (pendingNeuralText != null) {
                     String text=pendingNeuralText, id=pendingNeuralId;
                     pendingNeuralText=null; pendingNeuralId=null;
