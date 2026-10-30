@@ -522,7 +522,7 @@ public final class OpenCodeWebActivity extends Activity {
                                     rest = response.substring(first.length()).trim();
                                 if (!first.isEmpty() && kokoro != null && kokoro.isReady()) {
                                     if (!rest.isEmpty()) kokoro.append(rest, "jarvis-native");
-                                    else kokoro.append("All set.", "jarvis-native");
+                                    else kokoro.finishQueuedTurn("jarvis-native");
                                 } else speakAssistant(rest, "jarvis-native");
                             } else if (jarvis != null) jarvis.onAnswerSpoken();
                         }
