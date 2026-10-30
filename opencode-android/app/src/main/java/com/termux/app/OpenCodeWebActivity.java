@@ -99,7 +99,15 @@ public final class OpenCodeWebActivity extends Activity {
         android.speech.tts.TextToSpeech.OnInitListener init = statusCode -> {
             if (statusCode != TextToSpeech.SUCCESS || speech == null) {
                 handler.post(() -> {
-                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Unable to initialize selected TTS. Choose another voice.");
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Selected TTS unavailable.");
+                    if (!requestedVoiceEngine.isEmpty()) {
+                        // An optional local engine may have been removed or not configured.
+                        // Keep the assistant usable with the system engine.
+                        OpenCodeWebService.preferences(this).edit()
+                            .putString("jarvis_voice_engine", "").remove("jarvis_voice_name").apply();
+                        initializeTts("");
+                        if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Falling back to Android default.");
+                    }
                 });
                 return;
             }
