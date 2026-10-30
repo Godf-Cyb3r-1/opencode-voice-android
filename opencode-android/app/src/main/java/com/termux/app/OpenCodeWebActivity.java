@@ -69,6 +69,8 @@ public final class OpenCodeWebActivity extends Activity {
     private static final int PICK_FILE = 4120;
     private static final int VOICE_REQUEST = 4121;
     private TextToSpeech speech;
+    private JarvisKokoroVoice kokoro;
+    private boolean preferKokoro = true;
     private volatile boolean ttsReady;
     private String pendingSpeakText;
     private String pendingSpeakId;
@@ -181,6 +183,20 @@ public final class OpenCodeWebActivity extends Activity {
             : new TextToSpeech(this, init, requestedVoiceEngine);
     }
 
+    private void speakAssistant(String text, String id) {
+        String spoken = JarvisSpeechStyle.prepare(text);
+        if (spoken.isEmpty()) return;
+        if (preferKokoro && kokoro != null) {
+            if (kokoro.isReady()) {
+                kokoro.speak(spoken, id);
+                return;
+            }
+            if (dashboard != null)
+                dashboard.addEvent("KOKORO  •  Preparing the offline neural model; using fallback until ready.");
+        }
+        speakJarvis(spoken, id);
+    }
+
     private void speakJarvis(String text, String id) {
         if (text == null || text.trim().isEmpty()) return;
         if (speech == null || !ttsReady) {
@@ -199,24 +215,70 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     private void showVoiceSettings() {
-        final String[] options = {"Select local / system TTS engine", "Select installed voice",
-            "Speech speed", "Voice pitch", "Preview Jarvis voice", "Android TTS settings"};
+        final String[] options = {
+            "Primary speech engine: " + (preferKokoro ? "Kokoro 82M (native offline)" : "Android TTS"),
+            "Choose Kokoro voice",
+            "Kokoro speaking speed",
+            "Preview Jarvis voice",
+            "Android fallback TTS engine",
+            "Android fallback voice",
+            "Android TTS settings"
+        };
         new AlertDialog.Builder(this).setTitle("Jarvis • Voice Studio")
             .setItems(options, (dialog, choice) -> {
                 switch (choice) {
-                    case 0: chooseTtsEngine(); break;
-                    case 1: chooseInstalledVoice(); break;
-                    case 2: chooseVoiceValue("jarvis_voice_rate", "Speech speed", 0.6f, 1.5f); break;
-                    case 3: chooseVoiceValue("jarvis_voice_pitch", "Voice pitch", 0.7f, 1.3f); break;
-                    case 4: speakJarvis("Jarvis online. Your personal assistant is ready.", "jarvis-preview"); break;
-                    case 5:
+                    case 0:
+                        preferKokoro = !preferKokoro;
+                        OpenCodeWebService.preferences(this).edit()
+                            .putBoolean("jarvis_prefer_kokoro", preferKokoro).apply();
+                        if (dashboard != null) dashboard.addEvent("VOICE PATH  •  " +
+                            (preferKokoro ? "Kokoro native neural" : "Android system TTS"));
+                        break;
+                    case 1: chooseKokoroVoice(); break;
+                    case 2: chooseKokoroSpeed(); break;
+                    case 3: speakAssistant("Good evening. Jarvis is online, and your assistant is ready.", "jarvis-preview"); break;
+                    case 4: chooseTtsEngine(); break;
+                    case 5: chooseInstalledVoice(); break;
+                    case 6:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
-                        catch (Exception unavailable) {
-                            startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));
-                        }
+                        catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
+                        break;
+                }
                         break;
                 }
             }).setNegativeButton("Close", null).show();
+    }
+
+    private void chooseKokoroVoice() {
+        String[] voiceNames = {
+            "0 · American female", "1 · Bella (US female)", "2 · Nicole (US female)",
+            "3 · Sarah (US female)", "4 · Sky (US female)", "5 · Adam (US male)",
+            "6 · Michael (US male)", "7 · Emma (UK female)",
+            "8 · Isabella (UK female)", "9 · George (UK male)", "10 · Lewis (UK male)"
+        };
+        int current = OpenCodeWebService.preferences(this).getInt("jarvis_kokoro_voice", 10);
+        new AlertDialog.Builder(this).setTitle("Kokoro offline neural voices")
+            .setSingleChoiceItems(voiceNames, current, (dialog, which) -> {
+                OpenCodeWebService.preferences(this).edit().putInt("jarvis_kokoro_voice", which).apply();
+                if (kokoro != null) kokoro.setVoice(which);
+                dialog.dismiss();
+                if (dashboard != null) dashboard.addEvent("KOKORO VOICE  •  " + voiceNames[which]);
+                speakAssistant("Voice calibration complete. At your service.", "jarvis-preview");
+            }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void chooseKokoroSpeed() {
+        android.widget.SeekBar speedControl = new android.widget.SeekBar(this);
+        speedControl.setMax(45);
+        float current = OpenCodeWebService.preferences(this).getFloat("jarvis_kokoro_speed", .97f);
+        speedControl.setProgress(Math.max(0,Math.min(45,Math.round((current-.75f)*100f))));
+        new AlertDialog.Builder(this).setTitle("Kokoro delivery speed")
+            .setView(speedControl).setPositiveButton("Apply", (dialog,which) -> {
+                float speed=.75f+speedControl.getProgress()/100f;
+                OpenCodeWebService.preferences(this).edit().putFloat("jarvis_kokoro_speed",speed).apply();
+                if(kokoro!=null)kokoro.setSpeed(speed);
+                speakAssistant("Speech pacing adjusted. How does that sound?", "jarvis-preview");
+            }).setNegativeButton("Cancel",null).show();
     }
 
     private void chooseTtsEngine() {
@@ -309,7 +371,7 @@ public final class OpenCodeWebActivity extends Activity {
                                 if (speech != null) {
                                     jarvisNarrating = jarvisAnswerPending;
                                     jarvisAnswerPending = false;
-                                    speakJarvis(message, "oc-auto");
+                                    speakAssistant(message, "oc-auto");
                                 }
                             } else pendingNarration = message;
                         }
@@ -372,7 +434,29 @@ public final class OpenCodeWebActivity extends Activity {
         status.setTextColor(Color.rgb(160, 160, 160));
         status.setTextSize(11);
         toolbar.addView(status);
+        preferKokoro = OpenCodeWebService.preferences(this).getBoolean("jarvis_prefer_kokoro", true);
         initializeTts(OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", ""));
+        kokoro = new JarvisKokoroVoice(this, new JarvisKokoroVoice.Events() {
+            @Override public void ready() {
+                if (dashboard != null) dashboard.addEvent("KOKORO 82M  •  Native neural voice ready (offline).");
+            }
+            @Override public void started(String id) {
+                if (dashboard != null) dashboard.setState("speaking");
+            }
+            @Override public void completed(String id) {
+                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+            }
+            @Override public void failed(String id, String reason) {
+                if (dashboard != null) dashboard.addEvent("KOKORO ERROR  •  " + reason);
+                if (!"initialization".equals(id)) {
+                    if (dashboard != null) dashboard.addEvent("VOICE  •  Fallback to system speech for this utterance.");
+                } else if (dashboard != null) {
+                    dashboard.addEvent("VOICE  •  Kokoro initialization failed; Android TTS remains available.");
+                }
+            }
+        });
+        kokoro.setVoice(OpenCodeWebService.preferences(this).getInt("jarvis_kokoro_voice", 10));
+        kokoro.setSpeed(OpenCodeWebService.preferences(this).getFloat("jarvis_kokoro_speed", 0.97f));
         engineClient = new JarvisEngineClient(this);
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
             @Override public void onTranscript(String transcript) {
@@ -395,7 +479,7 @@ public final class OpenCodeWebActivity extends Activity {
                             if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
                             if (speech != null && jarvis != null && jarvis.isActive()) {
                                 dashboard.setState("speaking");
-                                speakJarvis(response, "jarvis-native");
+                                speakAssistant(response, "jarvis-native");
                             } else if (jarvis != null) jarvis.onAnswerSpoken();
                         }
                         @Override public void onError(String diagnostic) {
@@ -566,7 +650,7 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void onSpeak(String result) {
                 if (speech != null) {
                     dashboard.setState("speaking");
-                    speakJarvis(result, "jarvis-native");
+                    speakAssistant(result, "jarvis-native");
                 } else if (jarvis != null) jarvis.onAnswerSpoken();
             }
         });
@@ -1000,6 +1084,7 @@ public final class OpenCodeWebActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
         if (engineClient != null) engineClient.close();
+        if (kokoro != null) kokoro.close();
         if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (!rendererGone) web.destroy();
