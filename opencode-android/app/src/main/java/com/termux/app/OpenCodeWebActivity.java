@@ -89,6 +89,161 @@ public final class OpenCodeWebActivity extends Activity {
         if (status != null && jarvis != null && jarvis.isActive()) status.setText("Jarvis " + state);
         if (dashboard != null) dashboard.setState(state);
     }
+    // Select any Android-installed TTS engine, including offline neural engines
+    // such as HayaiTTS when independently installed and configured by the user.
+    // No cloud speech credentials are required by this Android integration.
+    private String requestedVoiceEngine = "";
+    private void initializeTts(String engine) {
+        if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
+        requestedVoiceEngine = engine == null ? "" : engine;
+        android.speech.tts.TextToSpeech.OnInitListener init = statusCode -> {
+            if (statusCode != TextToSpeech.SUCCESS || speech == null) {
+                handler.post(() -> {
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Unable to initialize selected TTS. Choose another voice.");
+                });
+                return;
+            }
+            try {
+                String preferred = OpenCodeWebService.preferences(this).getString("jarvis_voice_name", "");
+                boolean applied = false;
+                if (!preferred.isEmpty()) {
+                    for (android.speech.tts.Voice voice : speech.getVoices()) {
+                        if (preferred.equals(voice.getName())) {
+                            applied = speech.setVoice(voice) == TextToSpeech.SUCCESS;
+                            break;
+                        }
+                    }
+                }
+                if (!applied) speech.setLanguage(Locale.getDefault());
+                float rate = OpenCodeWebService.preferences(this).getFloat("jarvis_voice_rate", 1.0f);
+                float pitch = OpenCodeWebService.preferences(this).getFloat("jarvis_voice_pitch", 1.0f);
+                speech.setSpeechRate(rate);
+                speech.setPitch(pitch);
+                speech.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                    @Override public void onStart(String id) {
+                        handler.post(() -> { if (dashboard != null) dashboard.setState("speaking"); });
+                    }
+                    @Override public void onDone(String id) {
+                        handler.post(() -> {
+                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+                            if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
+                                jarvisNarrating = false;
+                                jarvis.onAnswerSpoken();
+                            }
+                        });
+                    }
+                    @Override public void onError(String id) {
+                        handler.post(() -> {
+                            if (dashboard != null) dashboard.addEvent("VOICE ERROR  •  TTS synthesis failed.");
+                            if (jarvis != null) jarvis.onAnswerUnavailable();
+                        });
+                    }
+                });
+                handler.post(() -> {
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  " + speech.getDefaultEngine());
+                });
+            } catch (Exception error) {
+                handler.post(() -> {
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Initialization failed.");
+                });
+            }
+        };
+        speech = requestedVoiceEngine.isEmpty()
+            ? new TextToSpeech(this, init)
+            : new TextToSpeech(this, init, requestedVoiceEngine);
+    }
+
+    private void showVoiceSettings() {
+        final String[] options = {"Select local / system TTS engine", "Select installed voice",
+            "Speech speed", "Voice pitch", "Preview Jarvis voice", "Android TTS settings"};
+        new AlertDialog.Builder(this).setTitle("Jarvis • Voice Studio")
+            .setItems(options, (dialog, choice) -> {
+                switch (choice) {
+                    case 0: chooseTtsEngine(); break;
+                    case 1: chooseInstalledVoice(); break;
+                    case 2: chooseVoiceValue("jarvis_voice_rate", "Speech speed", 0.6f, 1.5f); break;
+                    case 3: chooseVoiceValue("jarvis_voice_pitch", "Voice pitch", 0.7f, 1.3f); break;
+                    case 4: if (speech != null) speech.speak("Jarvis online. Your personal assistant is ready.",
+                        TextToSpeech.QUEUE_FLUSH, null, "jarvis-preview"); break;
+                    case 5:
+                        try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
+                        catch (Exception unavailable) {
+                            startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));
+                        }
+                        break;
+                }
+            }).setNegativeButton("Close", null).show();
+    }
+
+    private void chooseTtsEngine() {
+        if (speech == null) { showVoiceSettings(); return; }
+        java.util.List<TextToSpeech.EngineInfo> engines = speech.getEngines();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        java.util.List<String> packages = new java.util.ArrayList<>();
+        labels.add("Android system default"); packages.add("");
+        for (TextToSpeech.EngineInfo engine : engines) {
+            labels.add(engine.label + " (" + engine.name + ")");
+            packages.add(engine.name);
+        }
+        String configured = OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", "");
+        int selected = packages.indexOf(configured);
+        new AlertDialog.Builder(this).setTitle("Select speech engine")
+            .setSingleChoiceItems(labels.toArray(new String[0]), Math.max(0, selected),
+                (dialog, index) -> {
+                    String chosen = packages.get(index);
+                    OpenCodeWebService.preferences(this).edit()
+                        .putString("jarvis_voice_engine", chosen)
+                        .remove("jarvis_voice_name").apply();
+                    if (jarvis != null && jarvis.isActive()) jarvis.stop();
+                    initializeTts(chosen);
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE SELECTED  •  " + labels.get(index));
+                    dialog.dismiss();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void chooseInstalledVoice() {
+        if (speech == null) return;
+        java.util.Set<android.speech.tts.Voice> available = speech.getVoices();
+        if (available == null || available.isEmpty()) {
+            new AlertDialog.Builder(this).setMessage("No voices available from the selected TTS engine.")
+                .setPositiveButton("OK", null).show();
+            return;
+        }
+        java.util.List<android.speech.tts.Voice> voices = new java.util.ArrayList<>(available);
+        java.util.Collections.sort(voices, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        for (android.speech.tts.Voice voice : voices) {
+            labels.add(voice.getName() + " • " + voice.getLocale().toLanguageTag()
+                + (voice.isNetworkConnectionRequired() ? " • network" : " • local"));
+        }
+        new AlertDialog.Builder(this).setTitle("Available voices")
+            .setItems(labels.toArray(new String[0]), (dialog, which) -> {
+                android.speech.tts.Voice selected = voices.get(which);
+                if (speech.setVoice(selected) == TextToSpeech.SUCCESS) {
+                    OpenCodeWebService.preferences(this).edit()
+                        .putString("jarvis_voice_name", selected.getName()).apply();
+                    if (dashboard != null) dashboard.addEvent("VOICE SELECTED  •  " + selected.getName());
+                } else if (dashboard != null) dashboard.addEvent("VOICE ERROR  •  Voice not available; download its data in the selected TTS engine.");
+            }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void chooseVoiceValue(String preference, String title, float lower, float upper) {
+        final int steps = 20;
+        float current = OpenCodeWebService.preferences(this).getFloat(preference, 1f);
+        android.widget.SeekBar slider = new android.widget.SeekBar(this);
+        slider.setMax(steps);
+        slider.setProgress(Math.min(steps, Math.max(0, Math.round((current - lower) / (upper - lower) * steps))));
+        new AlertDialog.Builder(this).setTitle(title).setView(slider)
+            .setPositiveButton("Apply", (dialog, which) -> {
+                float value = lower + slider.getProgress() / (float) steps * (upper - lower);
+                OpenCodeWebService.preferences(this).edit().putFloat(preference, value).apply();
+                if (speech != null) {
+                    if (preference.endsWith("rate")) speech.setSpeechRate(value);
+                    else speech.setPitch(value);
+                }
+            }).setNegativeButton("Cancel", null).show();
+    }
+
     private boolean autoNarrate = false;
     private String lastNarrated = "";
     private final Runnable narrationPoll = new Runnable() {
@@ -173,28 +328,7 @@ public final class OpenCodeWebActivity extends Activity {
         status.setTextColor(Color.rgb(160, 160, 160));
         status.setTextSize(11);
         toolbar.addView(status);
-        speech = new TextToSpeech(this, statusCode -> {
-            if (statusCode == TextToSpeech.SUCCESS && speech != null) {
-                speech.setLanguage(Locale.getDefault());
-                speech.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
-                    @Override public void onStart(String id) {
-                        handler.post(() -> { if (dashboard != null) dashboard.setState("speaking"); });
-                    }
-                    @Override public void onDone(String id) {
-                        handler.post(() -> {
-                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
-                            if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
-                                jarvisNarrating = false;
-                                jarvis.onAnswerSpoken();
-                            }
-                        });
-                    }
-                    @Override public void onError(String id) {
-                        handler.post(() -> { if (jarvis != null) jarvis.onAnswerUnavailable(); });
-                    }
-                });
-            }
-        });
+        initializeTts(OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", ""));
         engineClient = new JarvisEngineClient(this);
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
             @Override public void onTranscript(String transcript) {
@@ -374,10 +508,7 @@ public final class OpenCodeWebActivity extends Activity {
                 updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
             }
             @Override public void openConsole() { toggleEngineConsole(); }
-            @Override public void openSettings() {
-                try { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
-                catch (Exception e) { dashboard.addEvent("Android settings unavailable."); }
-            }
+            @Override public void openSettings() { showVoiceSettings(); }
             @Override public void stopSpeaking() {
                 if (speech != null) speech.stop();
                 if (jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
