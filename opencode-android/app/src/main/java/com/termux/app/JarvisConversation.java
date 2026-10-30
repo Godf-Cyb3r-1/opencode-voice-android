@@ -10,6 +10,7 @@ final class JarvisConversation {
     interface Callbacks {
         void onTranscript(String text);
         void onState(String state);
+        void onPartial(String text);
     }
 
     private final JarvisStreamingStt stt;
@@ -24,7 +25,7 @@ final class JarvisConversation {
                 if(active) callbacks.onState(state);
             }
             @Override public void onPartial(String partial) {
-                if(active && !awaitingResponse) callbacks.onState("hearing");
+                if(active && !awaitingResponse) callbacks.onPartial(partial);
             }
             @Override public void onFinal(String transcript) {
                 if(!active || awaitingResponse) return;
