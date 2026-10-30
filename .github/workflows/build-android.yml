@@ -49,7 +49,7 @@ jobs:
           chmod +x gradlew scripts/build.sh
           bash scripts/build.sh
           for apk in app/build/outputs/apk/debug/*.apk; do
-            unzip -l "$apk" | grep -q "assets/kokoro-en-v0_19/model.onnx" || { echo "Kokoro model missing from $apk"; exit 1; }
+            unzip -Z -1 "$apk" | grep -F "assets/kokoro-en-v0_19/model.onnx" >/dev/null || { echo "Kokoro model missing from $apk"; exit 1; }
             echo "Verified Kokoro weights packaged in $apk"
           done
       - name: List generated APKs
