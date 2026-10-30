@@ -120,7 +120,7 @@ final class JarvisKokoroVoice {
         final int ticket = generation.get();
         worker.execute(() -> {
             if (ticket != generation.get() || closed) return;
-            playPhrases(text, id, ticket, false);
+            playPhrases(text, id, ticket, true);
         });
     }
 
