@@ -135,6 +135,7 @@ android {
 
     packagingOptions {
         jniLibs {
+            pickFirsts += ["**/libonnxruntime.so"]
             useLegacyPackaging true
         }
     }
