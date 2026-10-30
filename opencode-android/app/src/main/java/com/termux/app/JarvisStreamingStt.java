@@ -1,33 +1,21 @@
 package com.termux.app;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.pm.PackageManager;
-import android.media.AudioFormat;
-import android.media.AudioRecord;
-import android.media.MediaRecorder;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
-import com.k2fsa.sherpa.onnx.OnlineModelConfig;
-import com.k2fsa.sherpa.onnx.OnlineRecognizer;
-import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig;
-import com.k2fsa.sherpa.onnx.OnlineStream;
-import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
+
+import ai.moonshine.voice.MicTranscriber;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Persistent 16kHz microphone -> sherpa online Zipformer. No Android
- * SpeechRecognizer, network audio service, silence-intent, or dialog.
+ * Moonshine Voice on-device streaming speech recognition.
  *
- * Endpointing combines energy speech activity, partial text stability, and
- * adaptive trailing silence. Microphone stays open across user turns.
- * During TTS, audio frames are discarded to avoid self-trigger/feedback;
- * interrupt-to-talk is provided via the existing Jarvis UI control.
+ * This replaces the handwritten audio-energy/Zipformer endpoint detector.
+ * Moonshine owns microphone capture, decoding and phrase segmentation.
+ * A continuation window prevents a small pause from becoming an OpenCode
+ * command; another partial or completed phrase extends that window.
+ * No recognition of internal OpenCode thinking/tool output is involved.
  */
 final class JarvisStreamingStt {
     interface Events {
@@ -37,215 +25,182 @@ final class JarvisStreamingStt {
         void onFailure(String reason);
     }
 
-    private static final int RATE = 16000;
-    private static final int FRAME = 640; // 40ms
+    private static final long CONTINUATION_MS = 1250L;
     private final Activity activity;
     private final Events events;
-    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private volatile boolean running;
-    private volatile boolean pausedForResponse;
-    private volatile boolean closed;
-    private AudioRecord microphone;
-    private OnlineRecognizer recognizer;
-    private OnlineStream stream;
+    private MicTranscriber mic;
+    private boolean started;
+    private boolean loading;
+    private boolean closing;
+    private boolean waiting;
+    private int generation;
+    private String pending = "";
+    private String live = "";
 
     JarvisStreamingStt(Activity activity, Events events) {
-        this.activity=activity;
-        this.events=events;
+        this.activity = activity;
+        this.events = events;
     }
 
     void start() {
-        if(running || closed) return;
-        if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) {
-            activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},4122);
+        main.post(() -> {
+            if (closing || started || loading) return;
+            if (mic != null) {
+                startLoaded();
+                return;
+            }
+            loading = true;
+            events.onState("loading Moonshine STT");
+            worker.execute(() -> {
+                try {
+                    MicTranscriber instance = new MicTranscriber(activity)
+                        .onText(this::onPartialText)
+                        .onLine(line -> onCompletedLine(line.text))
+                        .onError(error -> onError(error == null ? "Unknown recording error" : error.toString()))
+                        .onProgress((fraction, file) -> main.post(() ->
+                            events.onState("STT model " + (int)(fraction * 100) + "%")));
+                    // The official Android API caches the downloaded model in
+                    // app-private storage for later fully offline operation.
+                    instance.load();
+                    main.post(() -> {
+                        loading = false;
+                        if (closing) {
+                            instance.close();
+                            return;
+                        }
+                        mic = instance;
+                        startLoaded();
+                    });
+                } catch (Throwable error) {
+                    main.post(() -> {
+                        loading = false;
+                        onError("Moonshine model setup failed: " + error.getMessage());
+                    });
+                }
+            });
+        });
+    }
+
+    private void startLoaded() {
+        if (mic == null || closing || started || loading) return;
+        waiting = false;
+        pending = "";
+        live = "";
+        generation++;
+        events.onState("listening");
+        worker.execute(() -> {
+            try {
+                mic.start();
+                main.post(() -> {
+                    if (closing || waiting) {
+                        worker.execute(() -> {try {mic.stop();} catch (Throwable ignored) {}});
+                    } else {
+                        started = true;
+                        events.onState("listening");
+                    }
+                });
+            } catch (Throwable error) {
+                main.post(() -> onError("Moonshine microphone error: " + error.getMessage()));
+            }
+        });
+    }
+
+    private void onPartialText(String text) {
+        main.post(() -> {
+            if (closing || waiting) return;
+            String current = text == null ? "" : text.trim();
+            if (current.isEmpty()) return;
+            live = current;
+            generation++;
+            events.onPartial(join(pending, current));
+            events.onState("hearing");
+        });
+    }
+
+    private void onCompletedLine(String text) {
+        main.post(() -> {
+            if (closing || waiting) return;
+            String line = text == null ? "" : text.trim();
+            if (line.isEmpty()) return;
+            pending = join(pending, line);
+            live = "";
+            events.onPartial(pending);
+            final int ticket = ++generation;
+            main.postDelayed(() -> finish(ticket), CONTINUATION_MS);
+        });
+    }
+
+    private void finish(int ticket) {
+        if (closing || waiting || ticket != generation || pending.isEmpty()) return;
+        String finalText = pending.trim();
+        // A trailing connector suggests the user is still mid-thought.
+        if (finalText.matches("(?is).*(\\b(and|or|but|because|so|then|to|with|for|if|when|the|a|an|can|could|would|should|please))$")) {
+            final int next = ++generation;
+            main.postDelayed(() -> finish(next), 1700);
             return;
         }
-        running=true;
-        worker.execute(this::run);
+        pending = "";
+        live = "";
+        waiting = true;
+        started = false;
+        events.onState("thinking");
+        worker.execute(() -> {
+            try {if(mic != null) mic.stop();}catch(Throwable ignored){}
+        });
+        events.onFinal(finalText);
     }
 
-    void pauseForResponse() { pausedForResponse=true; }
-    void resumeListening() { pausedForResponse=false; }
+    private static String join(String a, String b) {
+        if(a == null || a.trim().isEmpty()) return b == null ? "" : b.trim();
+        if(b == null || b.trim().isEmpty()) return a.trim();
+        return a.trim() + " " + b.trim();
+    }
+
+    void pauseForResponse() {
+        main.post(() -> {
+            waiting = true;
+            generation++;
+        });
+    }
+
+    void resumeListening() {
+        main.post(() -> {
+            waiting = false;
+            if (closing) return;
+            startLoaded();
+        });
+    }
+
     void stop() {
-        running=false;
-        pausedForResponse=false;
-        synchronized(this) {if(microphone!=null)try{microphone.stop();}catch(Exception ignored){}}
-    }
-    void close() {closed=true;stop();worker.shutdownNow();}
-
-    private void emitState(String state) {ui.post(()->events.onState(state));}
-    private void emitError(String error) {ui.post(()->events.onFailure(error));}
-
-    private void copy(String source, File dest) throws Exception {
-        if(dest.isFile() && dest.length()>1024)return;
-        File parent=dest.getParentFile();
-        if(!parent.isDirectory() && !parent.mkdirs()) throw new IllegalStateException("No model storage");
-        File partial=new File(parent,dest.getName()+".partial");
-        try(InputStream input=activity.getAssets().open(source);
-            FileOutputStream out=new FileOutputStream(partial)) {
-            byte[] chunk=new byte[32768];int read;
-            while((read=input.read(chunk))!=-1) {
-                if(!running)throw new InterruptedException("Stopped");
-                out.write(chunk,0,read);
-            }
-        }catch(Exception ex){partial.delete();throw ex;}
-        if(partial.length()<1024||!partial.renameTo(dest)) throw new IllegalStateException("Incomplete ASR model: "+source);
+        main.post(() -> {
+            waiting = true;
+            started = false;
+            generation++;
+            pending = "";
+            live = "";
+            worker.execute(() -> {
+                try {if(mic != null) mic.stop();}catch(Throwable ignored){}
+            });
+            events.onState("off");
+        });
     }
 
-    private void initialize() throws Exception {
-        emitState("loading offline speech model");
-        String folder="sherpa-onnx-streaming-zipformer-en-2023-06-26";
-        File root=new File(activity.getFilesDir(),folder);
-        String enc="encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx";
-        String dec="decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx";
-        String join="joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx";
-        for(String p:new String[]{enc,dec,join,"tokens.txt"})
-            copy(folder+"/"+p,new File(root,p));
-        OnlineTransducerModelConfig transducer=OnlineTransducerModelConfig.builder()
-            .setEncoder(new File(root,enc).getAbsolutePath())
-            .setDecoder(new File(root,dec).getAbsolutePath())
-            .setJoiner(new File(root,join).getAbsolutePath()).build();
-        OnlineModelConfig model=OnlineModelConfig.builder()
-            .setTransducer(transducer)
-            .setTokens(new File(root,"tokens.txt").getAbsolutePath())
-            .setNumThreads(2).setDebug(false).build();
-        OnlineRecognizerConfig config=OnlineRecognizerConfig.builder()
-            .setOnlineModelConfig(model)
-            .setDecodingMethod("greedy_search")
-            .setEnableEndpoint(true)
-            .build();
-        recognizer=new OnlineRecognizer(config);
-        stream=recognizer.createStream();
+    void close() {
+        main.post(() -> {
+            closing = true;
+            waiting = true;
+            generation++;
+            worker.execute(() -> {
+                try {if(mic != null) mic.close();}catch(Throwable ignored){}
+                mic = null;
+            });
+            worker.shutdown();
+        });
     }
 
-    private void run() {
-        try {
-            initialize();
-            int minimum=AudioRecord.getMinBufferSize(RATE,
-                AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
-            if(minimum<=0)throw new IllegalStateException("Microphone format unsupported");
-            AudioRecord recorder=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,RATE,
-                AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
-                Math.max(minimum,FRAME*2*8));
-            if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new IllegalStateException("Microphone initialization failed");
-            synchronized(this){microphone=recorder;}
-            recorder.startRecording();
-            emitState("listening");
-            short[] pcm=new short[FRAME];
-            String lastPartial="";
-            String lastStable="";
-            long lastSpeech=0L;
-            long startedUtterance=0L;
-            long lastPartialUpdate=0L;
-            long lastTextChange=0L;
-            long lastFrameDebug=0L;
-            int stable=0;
-            boolean hasSpeech=false;
-            boolean wasPaused=false;
-            int activeFrames=0;
-            while(running && !closed) {
-                int n=recorder.read(pcm,0,pcm.length,AudioRecord.READ_BLOCKING);
-                if(n<=0) {
-                    if(!running)break;
-                    throw new IllegalStateException("AudioRecord read: "+n);
-                }
-                if(pausedForResponse) {
-                    if(!wasPaused) {
-                        recognizer.reset(stream);
-                        hasSpeech=false;activeFrames=0;stable=0;lastTextChange=0L;
-                        lastPartial="";lastStable="";
-                    }
-                    wasPaused=true;
-                    continue;
-                }
-                if(wasPaused) {
-                    recognizer.reset(stream);wasPaused=false;
-                    emitState("listening");
-                }
-                float[] samples=new float[n];
-                double power=0;
-                for(int i=0;i<n;i++) {
-                    samples[i]=pcm[i]/32768f;
-                    power+=samples[i]*samples[i];
-                }
-                double rms=Math.sqrt(power/n);
-                long now=SystemClock.elapsedRealtime();
-                // RMS is a coarse speech activity signal. It does not itself
-                // terminate utterances; recognized text + stability are required.
-                boolean activeAudio=rms>.018;
-                if(activeAudio)activeFrames++;else activeFrames=Math.max(0,activeFrames-1);
-                if(activeFrames>=3) {
-                    if(!hasSpeech) {startedUtterance=now;emitState("hearing");}
-                    hasSpeech=true;
-                    lastSpeech=now;
-                }
-                stream.acceptWaveform(samples,RATE);
-                while(recognizer.isReady(stream)) recognizer.decode(stream);
-                String partial=recognizer.getResult(stream).getText().trim();
-                if(!partial.equals(lastPartial)) {
-                    stable=0;
-                    lastStable=lastPartial;
-                    lastPartial=partial;
-                    if (!partial.isEmpty()) {
-                        lastTextChange=now;
-                        // New decoded words override quiet microphone RMS.
-                        hasSpeech=true;
-                        if (startedUtterance==0L) startedUtterance=now;
-                        lastSpeech=now;
-                    }
-                    if(now-lastPartialUpdate>180 && !partial.isEmpty()) {
-                        String visible=partial;
-                        ui.post(()->events.onPartial(visible));
-                        lastPartialUpdate=now;
-                    }
-                }else if(!partial.isEmpty())stable++;
-                if(!hasSpeech || partial.isEmpty()) {
-                    // An endpoint can be signalled without a viable transcript.
-                    // Recycle the acoustic state rather than staying in HEARING.
-                    if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
-                        recognizer.reset(stream);
-                        activeFrames=0;hasSpeech=false;startedUtterance=0L;
-                        emitState("listening");
-                    }
-                    continue;
-                }
-                long quiet=now-lastSpeech;
-                long textIdle=lastTextChange==0L?0L:now-lastTextChange;
-                boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                boolean meaningful=partial.split("\\s+").length>=2;
-                boolean nativeEndpoint=recognizer.isEndpoint(stream);
-                // Stop waiting forever when microphone noise keeps the crude
-                // energy detector active. Require stable recognized text too.
-                long quietLimit=incomplete?2800:1400;
-                long stuckLimit=incomplete?5500:2500;
-                boolean endOfTurn=meaningful && stable>=3 &&
-                    (nativeEndpoint && textIdle>=350 ||
-                     quiet>=quietLimit && textIdle>=650 ||
-                     textIdle>=stuckLimit);
-                if(endOfTurn && now-startedUtterance>=500) {
-                    final String utterance=partial;
-                    pausedForResponse=true;
-                    recognizer.reset(stream);
-                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
-                    emitState("thinking");
-                    ui.post(()->events.onFinal(utterance));
-                }
-            }
-        }catch(Throwable failure) {
-            String reason=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
-            if(running && !closed)emitError(reason);
-        }finally{
-            if(stream!=null){try{stream.release();}catch(Throwable ignored){}stream=null;}
-            if(recognizer!=null){try{recognizer.release();}catch(Throwable ignored){}recognizer=null;}
-            synchronized(this) {
-                if(microphone!=null) {
-                    try{microphone.stop();}catch(Exception ignored){}
-                    try{microphone.release();}catch(Exception ignored){}
-                    microphone=null;
-                }
-            }
-            running=false;
-        }
+    private void onError(String reason) {
+        main.post(() -> events.onFailure(reason));
     }
 }
