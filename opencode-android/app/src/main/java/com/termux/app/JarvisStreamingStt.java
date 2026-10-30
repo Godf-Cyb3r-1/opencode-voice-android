@@ -36,6 +36,7 @@ final class JarvisStreamingStt {
     private boolean closing;
     private boolean waiting;
     private int generation;
+    private boolean gaveConnectorGrace;
     private String pending = "";
     private String live = "";
 
@@ -125,6 +126,7 @@ final class JarvisStreamingStt {
             String line = text == null ? "" : text.trim();
             if (line.isEmpty()) return;
             pending = join(pending, line);
+            gaveConnectorGrace = false;
             live = "";
             events.onPartial(pending);
             final int ticket = ++generation;
@@ -136,7 +138,8 @@ final class JarvisStreamingStt {
         if (closing || waiting || ticket != generation || pending.isEmpty()) return;
         String finalText = pending.trim();
         // A trailing connector suggests the user is still mid-thought.
-        if (finalText.matches("(?is).*(\\b(and|or|but|because|so|then|to|with|for|if|when|the|a|an|can|could|would|should|please))$")) {
+        if (!gaveConnectorGrace && finalText.matches("(?is).*(\\b(and|or|but|because|so|then|to|with|for|if|when|the|a|an|can|could|would|should|please))$")) {
+            gaveConnectorGrace = true;
             final int next = ++generation;
             main.postDelayed(() -> finish(next), 1700);
             return;
