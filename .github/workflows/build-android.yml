@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -44,19 +44,13 @@ jobs:
           test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/test_wavs/bria.wav
           test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/vocab.json
           test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/decoder.int8.onnx
-      - name: Prepare continuous streaming ASR model
-        run: |
-          chmod +x scripts/prepare_streaming_stt.sh
-          bash scripts/prepare_streaming_stt.sh
-          test -s app/src/main/assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx
       - name: Build signed debug APK
         run: |
           chmod +x gradlew scripts/build.sh
           TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS=0 bash scripts/build.sh
           for apk in app/build/outputs/apk/debug/*.apk; do
             unzip -Z -1 "$apk" | grep -F "assets/sherpa-onnx-pocket-tts-int8-2026-01-26/lm_main.int8.onnx" >/dev/null || { echo "Pocket TTS model missing from $apk"; exit 1; }
-            unzip -Z -1 "$apk" | grep -F "assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/tokens.txt" >/dev/null || { echo "Offline streaming STT model missing"; exit 1; }
-            echo "Verified offline Pocket TTS and streaming STT assets in $apk"
+            echo "Verified offline Pocket TTS assets in $apk"
           done
       - name: List generated APKs
         if: always()
@@ -64,7 +58,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-STT-Endpoint-Fix-Universal-APK
+          name: Jarvis-Moonshine-Realtime-STT-Universal-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
