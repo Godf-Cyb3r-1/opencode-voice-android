@@ -124,6 +124,13 @@ final class JarvisKokoroVoice {
         });
     }
 
+    void finishQueuedTurn(String id) {
+        final int ticket=generation.get();
+        worker.execute(() -> {
+            if (!closed && ticket==generation.get()) main.post(() -> events.completed(id));
+        });
+    }
+
     void speak(String text, String id) {
         if (!ready || closed) {
             main.post(()->events.failed(id, "Kokoro neural model not ready"));
