@@ -178,6 +178,7 @@ public final class OpenCodeWebActivity extends Activity {
                     @Override public void onStart(String id) { }
                     @Override public void onDone(String id) {
                         handler.post(() -> {
+                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
                             if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
                                 jarvisNarrating = false;
                                 jarvis.onAnswerSpoken();
@@ -197,7 +198,7 @@ public final class OpenCodeWebActivity extends Activity {
                 if (dashboard != null) dashboard.addEvent("VOICE REQUEST  •  " + transcript);
                 if (handleNativeAssistantAction(transcript)) {
                     jarvisAnswerPending = false;
-                    jarvis.onAnswerSpoken();
+                    if (speech == null) jarvis.onAnswerSpoken();
                 } else insertTranscript(transcript, true);
             }
             @Override public void onState(String state) { updateJarvisLabel(state); }
@@ -738,7 +739,8 @@ public final class OpenCodeWebActivity extends Activity {
     private void insertTranscript(String transcript) { insertTranscript(transcript, false); }
     private void insertTranscript(String transcript, boolean submit) {
         if (web == null || loadedOrigin == null) {
-            new AlertDialog.Builder(this).setMessage(transcript).setPositiveButton("OK", null).show();
+            if (dashboard != null) dashboard.addEvent("ENGINE NOT READY  •  Voice command was not submitted.");
+            if (jarvis != null && jarvis.isActive()) jarvis.stop();
             return;
         }
         String quoted = JSONObject.quote(transcript);
@@ -753,6 +755,8 @@ public final class OpenCodeWebActivity extends Activity {
             if (!"true".equals(result)) {
                 jarvisAnswerPending = false;
                 if (jarvis != null && jarvis.isActive()) jarvis.stop();
+                if (dashboard != null && submit) dashboard.addEvent("ENGINE SUBMISSION FAILED  •  Try again or inspect engine.");
+                if (submit) return;
                 new AlertDialog.Builder(this).setTitle("Transcription")
                 .setMessage(transcript).setPositiveButton("Copy", (d,w) -> {
                     android.content.ClipboardManager c = (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
@@ -794,6 +798,7 @@ public final class OpenCodeWebActivity extends Activity {
     @Override protected void onPause() {
         rememberRoute();
         pausedAt = android.os.SystemClock.elapsedRealtime();
+        if (jarvis != null && jarvis.isActive()) jarvis.stop();
         if (!rendererGone) web.onPause();
         super.onPause();
     }
