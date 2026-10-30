@@ -185,6 +185,12 @@ final class JarvisStreamingStt {
                     stable=0;
                     lastStable=lastPartial;
                     lastPartial=partial;
+                    if (!partial.isEmpty()) {
+                        // New decoded words override quiet microphone RMS.
+                        hasSpeech=true;
+                        if (startedUtterance==0L) startedUtterance=now;
+                        lastSpeech=now;
+                    }
                     if(now-lastPartialUpdate>180 && !partial.isEmpty()) {
                         String visible=partial;
                         ui.post(()->events.onPartial(visible));
@@ -202,7 +208,7 @@ final class JarvisStreamingStt {
                     final String utterance=partial;
                     pausedForResponse=true;
                     recognizer.reset(stream);
-                    hasSpeech=false;activeFrames=0;stable=0;lastPartial="";
+                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastPartial="";
                     emitState("thinking");
                     ui.post(()->events.onFinal(utterance));
                 }
