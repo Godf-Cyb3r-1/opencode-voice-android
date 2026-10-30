@@ -71,6 +71,11 @@ public final class OpenCodeWebActivity extends Activity {
     private TextToSpeech speech;
     private JarvisKokoroVoice kokoro;
     private boolean preferKokoro = true;
+    private boolean kokoroFailed;
+    private String pendingNeuralText;
+    private String pendingNeuralId;
+    private String currentNeuralText;
+    private String currentNeuralId;
     private volatile boolean ttsReady;
     private String pendingSpeakText;
     private String pendingSpeakId;
@@ -186,15 +191,21 @@ public final class OpenCodeWebActivity extends Activity {
     private void speakAssistant(String text, String id) {
         String spoken = JarvisSpeechStyle.prepare(text);
         if (spoken.isEmpty()) return;
-        if (preferKokoro && kokoro != null) {
+        if (preferKokoro && kokoro != null && !kokoroFailed) {
             if (kokoro.isReady()) {
-                kokoro.speak(spoken, id);
-                return;
+                currentNeuralText=spoken;
+                currentNeuralId=id;
+                kokoro.speak(spoken,id);
+            } else {
+                pendingNeuralText=spoken;
+                pendingNeuralId=id;
+                if (dashboard != null)
+                    dashboard.addEvent("KOKORO  •  Loading neural model. Speech is queued, not replaced with Android TTS.");
             }
-            if (dashboard != null)
-                dashboard.addEvent("KOKORO  •  Preparing the offline neural model; using fallback until ready.");
+            return;
         }
-        speakJarvis(spoken, id);
+        if (dashboard != null) dashboard.addEvent("VOICE FALLBACK  •  Android TTS is active.");
+        speakJarvis(spoken,id);
     }
 
     private void speakJarvis(String text, String id) {
@@ -437,19 +448,36 @@ public final class OpenCodeWebActivity extends Activity {
         kokoro = new JarvisKokoroVoice(this, new JarvisKokoroVoice.Events() {
             @Override public void ready() {
                 if (dashboard != null) dashboard.addEvent("KOKORO 82M  •  Native neural voice ready (offline).");
+                if (pendingNeuralText != null) {
+                    String text=pendingNeuralText, id=pendingNeuralId;
+                    pendingNeuralText=null; pendingNeuralId=null;
+                    speakAssistant(text,id);
+                }
             }
             @Override public void started(String id) {
                 if (dashboard != null) dashboard.setState("speaking");
             }
             @Override public void completed(String id) {
+                currentNeuralText=null;currentNeuralId=null;
                 if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
             }
             @Override public void failed(String id, String reason) {
                 if (dashboard != null) dashboard.addEvent("KOKORO ERROR  •  " + reason);
-                if (!"initialization".equals(id)) {
-                    if (dashboard != null) dashboard.addEvent("VOICE  •  Fallback to system speech for this utterance.");
-                } else if (dashboard != null) {
-                    dashboard.addEvent("VOICE  •  Kokoro initialization failed; Android TTS remains available.");
+                if ("initialization".equals(id)) {
+                    kokoroFailed=true;
+                    if (dashboard != null) dashboard.addEvent("VOICE  •  Kokoro unavailable; switching to Android TTS.");
+                    if (pendingNeuralText != null) {
+                        String text=pendingNeuralText, uid=pendingNeuralId;
+                        pendingNeuralText=null; pendingNeuralId=null;
+                        speakJarvis(text,uid);
+                    }
+                } else {
+                    if (dashboard != null) dashboard.addEvent("VOICE FALLBACK  •  Neural synthesis failed; using Android TTS for this utterance.");
+                    if (currentNeuralText != null && id.equals(currentNeuralId)) {
+                        String text=currentNeuralText;
+                        currentNeuralText=null;currentNeuralId=null;
+                        speakJarvis(text,id);
+                    }
                 }
             }
         });
