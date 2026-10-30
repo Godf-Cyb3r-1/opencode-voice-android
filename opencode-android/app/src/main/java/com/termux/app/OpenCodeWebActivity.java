@@ -437,7 +437,7 @@ public final class OpenCodeWebActivity extends Activity {
         initializeTts(OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", ""));
         pocket = new JarvisPocketVoice(this, new JarvisPocketVoice.Events() {
             @Override public void ready() {
-                if (dashboard != null) dashboard.addEvent("POCKET TTS 3  •  Native neural voice ready (offline).");
+                if (dashboard != null) dashboard.addEvent("POCKET TTS INT8  •  Reference voice ready (offline).");
                 if (pendingNeuralText != null) {
                     String text=pendingNeuralText, id=pendingNeuralId;
                     pendingNeuralText=null; pendingNeuralId=null;
@@ -983,7 +983,64 @@ public final class OpenCodeWebActivity extends Activity {
         return "application/octet-stream";
     }
 
+    private void importPocketReference(Uri uri) {
+        if (uri == null) return;
+        if (dashboard != null) dashboard.addEvent("REFERENCE VOICE  •  Importing audio...");
+        requests.execute(() -> {
+            java.io.File target = new java.io.File(getFilesDir(), "jarvis-reference.wav");
+            java.io.File temp = new java.io.File(getFilesDir(), "jarvis-reference.wav.partial");
+            try {
+                long total = 0;
+                try (InputStream source = getContentResolver().openInputStream(uri);
+                     java.io.FileOutputStream sink = new java.io.FileOutputStream(temp)) {
+                    if (source == null) throw new IllegalArgumentException("Unable to open audio");
+                    byte[] chunk = new byte[16384];
+                    int count;
+                    while ((count = source.read(chunk)) != -1) {
+                        total += count;
+                        if (total > 20 * 1024 * 1024)
+                            throw new IllegalArgumentException("Audio exceeds 20 MB");
+                        sink.write(chunk, 0, count);
+                    }
+                }
+                if (total < 1000) throw new IllegalArgumentException("Reference recording too short");
+                try (java.io.FileInputStream input = new java.io.FileInputStream(temp)) {
+                    byte[] header = new byte[12];
+                    if (input.read(header) != 12 ||
+                        header[0] != 'R' || header[1] != 'I' ||
+                        header[2] != 'F' || header[3] != 'F' ||
+                        header[8] != 'W' || header[9] != 'A' ||
+                        header[10] != 'V' || header[11] != 'E')
+                        throw new IllegalArgumentException("Select a PCM WAV recording, not MP3/M4A");
+                }
+                // Parse/validate with the same decoder as synthesis.
+                com.k2fsa.sherpa.onnx.WaveReader wave = new com.k2fsa.sherpa.onnx.WaveReader(temp.getAbsolutePath());
+                if (wave.getSamples() == null || wave.getSamples().length < wave.getSampleRate() * 2)
+                    throw new IllegalArgumentException("Use at least two seconds of clear speech");
+                if (target.exists() && !target.delete()) throw new IllegalStateException("Cannot replace reference");
+                if (!temp.renameTo(target)) throw new IllegalStateException("Cannot save reference audio");
+                getSharedPreferences("jarvis_pocket", MODE_PRIVATE).edit()
+                    .putString("reference", target.getAbsolutePath()).apply();
+                handler.post(() -> {
+                    if (pocket != null) pocket.setReferenceFile(target.getAbsolutePath());
+                    if (dashboard != null) dashboard.addEvent("REFERENCE VOICE  •  Installed locally. Testing clone.");
+                    speakAssistant("Voice profile installed. I'm ready to assist you.", "jarvis-preview");
+                });
+            } catch (Throwable failure) {
+                temp.delete();
+                String reason = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+                handler.post(() -> {
+                    if (dashboard != null) dashboard.addEvent("REFERENCE ERROR  •  " + reason);
+                });
+            }
+        });
+    }
+
     @Override protected void onActivityResult(int request, int result, Intent data) {
+        if (request == PICK_REFERENCE_AUDIO) {
+            if (result == RESULT_OK && data != null) importPocketReference(data.getData());
+            return;
+        }
         if (request == VOICE_REQUEST) {
             if (result == RESULT_OK && data != null) {
                 ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
