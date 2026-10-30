@@ -51,7 +51,10 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text", instruction);
+                JSONObject prompt = new JSONObject().put("text",
+                    JarvisSpeechStyle.instruction()
+                    + "\\n\\nTask: " + instruction
+                    + "\\n\\nAfter attempting actions, give one concise spoken status update.");
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
                 String latest = "";
