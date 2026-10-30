@@ -546,6 +546,7 @@ public final class OpenCodeWebActivity extends Activity {
         jarvisButton.setBackgroundColor(Color.TRANSPARENT);
         jarvisButton.setOnClickListener(v -> {
             if (speech != null) speech.stop();
+            if (kokoro != null) kokoro.stop();
             jarvis.toggle();
             autoNarrate = false;
             handler.removeCallbacks(narrationPoll);
@@ -683,6 +684,8 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void openSettings() { showVoiceSettings(); }
             @Override public void stopSpeaking() {
                 if (speech != null) speech.stop();
+                if (kokoro != null) kokoro.stop();
+                if (dashboard != null) dashboard.setState("standby");
                 if (jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
             }
         });
