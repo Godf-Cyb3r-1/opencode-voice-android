@@ -1,0 +1,74 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -u
+export PREFIX=/data/data/com.termux/files/usr
+export HOME=/data/data/com.termux/files/home
+export PATH="$PREFIX/bin:$PATH"
+export TMPDIR="$PREFIX/tmp"
+export TERM=xterm-256color
+export COLORTERM=truecolor
+export LANG=C.UTF-8
+export SHELL="$PREFIX/bin/bash"
+export BROWSER=termux-open-url
+state="$HOME/.local/state/opencode-android"
+mkdir -p "$state" "$HOME/projects/default" "$TMPDIR"
+project="$HOME/projects/default"
+if [[ -f "$state/workspace" ]]; then IFS= read -r project < "$state/workspace" || true; fi
+if [[ ! -d "$project" ]]; then project="$HOME/projects/default"; fi
+cd -- "$project" || exit 1
+server_args=()
+if [[ -f "$state/server.connection" ]]; then
+    { IFS= read -r server_url; IFS= read -r server_password; } < "$state/server.connection"
+    if [[ "$server_url" =~ ^http://127\.0\.0\.1:[0-9]+$ && "$server_password" =~ ^[A-Za-z0-9_-]{20,}$ ]]; then
+        export OPENCODE_PASSWORD="$server_password"
+        server_args=(--server "$server_url")
+    fi
+fi
+run_opencode() {
+    if (( ${#server_args[@]} == 0 )); then
+        printf 'Start the local engine from the main OpenCode screen first. Use option 6 for a recovery shell.\n'
+        return 1
+    fi
+    opencode "${server_args[@]}" "$@"
+}
+if ! command -v opencode >/dev/null; then
+    printf '\nThe embedded OpenCode binary is missing. Reinstall this app build.\n'
+else
+    printf '\nOpenCode Local · real engine on this device\nWorkspace: %s\n\n' "$project"
+    run_opencode "$project"
+    status=$?
+    if (( status != 0 )); then printf '\nOpenCode exited with code %s. See Diagnostics below.\n' "$status"; fi
+fi
+while true; do
+    printf '\nOpenCode Local\n  1  Open workspace\n  2  Continue latest session in this workspace\n  3  Choose workspace folder\n  4  Install Git and search tools (internet required)\n  5  Diagnostics\n  6  Local shell (type exit to return)\n  0  Close session\n\n> '
+    IFS= read -r choice || exit 0
+    case "$choice" in
+        1) run_opencode "$project" ;;
+        2) run_opencode --continue "$project" ;;
+        3)
+            printf 'Absolute folder path (blank cancels): '
+            IFS= read -r candidate || exit 0
+            [[ -z "$candidate" ]] && continue
+            if [[ "$candidate" != /* ]]; then printf 'Use an absolute path.\n'; continue; fi
+            if mkdir -p -- "$candidate" && cd -- "$candidate"; then
+                project="$PWD"
+                printf '%s\n' "$project" > "$state/workspace.tmp" && mv -- "$state/workspace.tmp" "$state/workspace"
+                printf 'Workspace: %s\n' "$project"
+            else printf 'Cannot access that folder.\n'; fi
+            ;;
+        4)
+            if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update; then
+                DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y git ripgrep
+            fi
+            ;;
+        5)
+            printf '\nArchitecture: '; uname -m
+            printf 'OpenCode: '; opencode --version
+            printf 'Workspace: %s\nFree storage:\n' "$project"; df -h "$HOME"
+            printf '\nLogs: %s/.local/share/opencode/log\n' "$HOME"
+            printf 'Android may stop background processes. Use the notification Wake lock option for long jobs.\n'
+            ;;
+        6) bash -l ;;
+        0) exit 0 ;;
+        *) printf 'Choose 0–6.\n' ;;
+    esac
+done

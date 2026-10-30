@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en" style="background-color: var(--v2-background-bg-deep, #fafafa)">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content, viewport-fit=cover"
+    />
+    <title>OpenCode</title>
+    <link rel="icon" type="image/x-icon" href="/icons/prod/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/prod/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials" />
+    <meta name="theme-color" content="#fafafa" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta property="og:image" content="/social-share.png" />
+    <meta property="twitter:image" content="/social-share.png" />
+    <script id="oc-theme-preload-script">;(function () {
+  var key = "opencode-theme-id"
+  var themeId = localStorage.getItem(key) || "oc-2"
+
+  var scheme = localStorage.getItem("opencode-color-scheme") || "system"
+  var isDark = scheme === "dark" || (scheme === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+  var mode = isDark ? "dark" : "light"
+
+  document.documentElement.dataset.theme = themeId
+  document.documentElement.dataset.colorScheme = mode
+  document.documentElement.style.backgroundColor = isDark ? "#080808" : "#fafafa"
+
+  // Update theme-color meta tag to match app color scheme
+  var metas = document.querySelectorAll("meta[name='theme-color']")
+  if (metas.length > 0) metas[0].setAttribute("content", isDark ? "#080808" : "#fafafa")
+
+  if (themeId === "oc-2") return
+
+  var css = localStorage.getItem("opencode-theme-css-" + mode)
+  if (css) {
+    var style = document.createElement("style")
+    style.id = "oc-theme-preload"
+    style.textContent =
+      ":root{color-scheme:" +
+      mode +
+      ";--text-mix-blend-mode:" +
+      (isDark ? "plus-lighter" : "multiply") +
+      ";" +
+      css +
+      "}"
+    document.head.appendChild(style)
+  }
+})()
+</script>
+    <script type="module" crossorigin src="/_assets/index-0N97Jfsx.js"></script>
+    <link rel="modulepreload" crossorigin href="/_assets/rolldown-runtime-hePW80VL.js">
+    <link rel="modulepreload" crossorigin href="/_assets/store-CKe_GNKE.js">
+    <link rel="modulepreload" crossorigin href="/_assets/helper-Bblviqkg.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dist-ClJkwvHJ.js">
+    <link rel="modulepreload" crossorigin href="/_assets/eventListener-DE7H-S6l.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dist-DYHIC8SL.js">
+    <link rel="modulepreload" crossorigin href="/_assets/JNCCF6MP-Bne6x287.js">
+    <link rel="modulepreload" crossorigin href="/_assets/5WXHJDCZ-D0ASXkS-.js">
+    <link rel="modulepreload" crossorigin href="/_assets/E53DB7BS-CpN1DnSA.js">
+    <link rel="modulepreload" crossorigin href="/_assets/EHGSTO6V-CO_eeAtB.js">
+    <link rel="modulepreload" crossorigin href="/_assets/UKTBL2JL-CCdnrJfz.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dist-CnLfcuk2.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dist-Dij9X4oH.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dialog-BO1oxOb8.js">
+    <link rel="modulepreload" crossorigin href="/_assets/LP6E37CW-BWkZAKHJ.js">
+    <link rel="modulepreload" crossorigin href="/_assets/i18n-CsWZLEBJ.js">
+    <link rel="modulepreload" crossorigin href="/_assets/encode-DO9V0ZMq.js">
+    <link rel="modulepreload" crossorigin href="/_assets/Predicate-DzMw71Fy.js">
+    <link rel="modulepreload" crossorigin href="/_assets/Schema-WyD6kTP3.js">
+    <link rel="modulepreload" crossorigin href="/_assets/path-m0dFCAHb.js">
+    <link rel="modulepreload" crossorigin href="/_assets/desktop-native-CHvAVYcr.js">
+    <link rel="modulepreload" crossorigin href="/_assets/preload-helper-Czpn1I53.js">
+    <link rel="modulepreload" crossorigin href="/_assets/language-CMI7CimP.js">
+    <link rel="modulepreload" crossorigin href="/_assets/session-message-CpQ1EvdA.js">
+    <link rel="modulepreload" crossorigin href="/_assets/session-BCnuNKpg.js">
+    <link rel="modulepreload" crossorigin href="/_assets/types-B4e5-Z6y.js">
+    <link rel="modulepreload" crossorigin href="/_assets/health-XJoJxJCv.js">
+    <link rel="modulepreload" crossorigin href="/_assets/sdk-CkbTLPB8.js">
+    <link rel="modulepreload" crossorigin href="/_assets/session-mention-CACczxAs.js">
+    <link rel="modulepreload" crossorigin href="/_assets/icon-DPM1uwPL.js">
+    <link rel="modulepreload" crossorigin href="/_assets/solid-BsWL5vXO.js">
+    <link rel="modulepreload" crossorigin href="/_assets/pty-Ve7O3LE3.js">
+    <link rel="modulepreload" crossorigin href="/_assets/reduced-nsQJmDHw.js">
+    <link rel="modulepreload" crossorigin href="/_assets/toast-CFB2asGn.js">
+    <link rel="modulepreload" crossorigin href="/_assets/build-DcGH9vss.js">
+    <link rel="modulepreload" crossorigin href="/_assets/current-tool-state-Bd8mpUJt.js">
+    <link rel="modulepreload" crossorigin href="/_assets/current-CQY6SGC3.js">
+    <link rel="modulepreload" crossorigin href="/_assets/motion-tuning-BWGaRYo_.js">
+    <link rel="modulepreload" crossorigin href="/_assets/button-RqYrZhEl.js">
+    <link rel="modulepreload" crossorigin href="/_assets/icon-button-O7O-wj_W.js">
+    <link rel="modulepreload" crossorigin href="/_assets/spin-phase-08zizIas.js">
+    <link rel="modulepreload" crossorigin href="/_assets/loop-BI4bKJ7M.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dist-C793zsZP.js">
+    <link rel="modulepreload" crossorigin href="/_assets/host-apis-DaErTscd.js">
+    <link rel="modulepreload" crossorigin href="/_assets/oc-2-Ds4CwnIV.js">
+    <link rel="modulepreload" crossorigin href="/_assets/project-avatar-CJiTGp_1.js">
+    <link rel="modulepreload" crossorigin href="/_assets/OGE3DKII-DKtwBUiO.js">
+    <link rel="modulepreload" crossorigin href="/_assets/tooltip-BGZUBrol.js">
+    <link rel="modulepreload" crossorigin href="/_assets/ZZYKR3VO-Dt_vh0ow.js">
+    <link rel="modulepreload" crossorigin href="/_assets/YFEENJN5-D9UG1ESv.js">
+    <link rel="modulepreload" crossorigin href="/_assets/text-field-h1JtEdDV.js">
+    <link rel="modulepreload" crossorigin href="/_assets/keybind-DG5gKtJi.js">
+    <link rel="modulepreload" crossorigin href="/_assets/progress-circle-QgjdgUgO.js">
+    <link rel="modulepreload" crossorigin href="/_assets/uploads-D-_7DlNs.js">
+    <link rel="modulepreload" crossorigin href="/_assets/SOM3K36D-CcqfQyZW.js">
+    <link rel="modulepreload" crossorigin href="/_assets/VI7QYH27-CfwVI6zO.js">
+    <link rel="modulepreload" crossorigin href="/_assets/menu-CPSokgvh.js">
+    <link rel="modulepreload" crossorigin href="/_assets/dialog-CY_l3w8p.js">
+    <link rel="modulepreload" crossorigin href="/_assets/session-progress-indicator-v2-BbWV_GJW.js">
+    <link rel="modulepreload" crossorigin href="/_assets/location-CKXDFEEl.js">
+    <link rel="stylesheet" crossorigin href="/_assets/icon-BDQzFLnz.css">
+    <link rel="stylesheet" crossorigin href="/_assets/toast-H4Zvf7UO.css">
+    <link rel="stylesheet" crossorigin href="/_assets/button-CUcpBpNW.css">
+    <link rel="stylesheet" crossorigin href="/_assets/icon-button-k4-w3twm.css">
+    <link rel="stylesheet" crossorigin href="/_assets/project-avatar-CR0W8oJC.css">
+    <link rel="stylesheet" crossorigin href="/_assets/tooltip-CLbg2OhN.css">
+    <link rel="stylesheet" crossorigin href="/_assets/keybind-BPjb096Y.css">
+    <link rel="stylesheet" crossorigin href="/_assets/progress-circle-K3lDN6-q.css">
+    <link rel="stylesheet" crossorigin href="/_assets/menu-Bk0kciJz.css">
+    <link rel="stylesheet" crossorigin href="/_assets/dialog-BUYQZsMU.css">
+    <link rel="stylesheet" crossorigin href="/_assets/session-progress-indicator-v2-i0edxwgI.css">
+    <link rel="stylesheet" crossorigin href="/_assets/index-CYaV_jcf.css">
+  </head>
+  <body
+    class="antialiased overscroll-none font-(family-name:--font-family-text) text-[13px] font-[440] overflow-hidden bg-v2-background-bg-deep"
+  >
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root" class="flex flex-col h-dvh bg-v2-background-bg-deep p-px"></div>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "termux_app": {
+    "repository": "https://github.com/termux/termux-app",
+    "commit": "8629e632fcb95da272221be327db653fb24befe9"
+  },
+  "opencode": {
+    "repository": "https://github.com/anomalyco/opencode",
+    "version": "2.1.4",
+    "commit": "4b83402a293c3d018216bbf75815175e32f3a16c",
+    "channel": "beta"
+  },
+  "android_port": {
+    "repository": "https://github.com/bd-loser/opencode-bionic",
+    "commit": "175a64b4afd6169c343e777b8e64aa77abd8035a"
+  },
+  "bootstrap": {
+    "url": "https://github.com/termux/termux-packages/releases/download/bootstrap-2026.02.12-r1%2Bapt.android-7/bootstrap-aarch64.zip",
+    "sha256": "ea2aeba8819e517db711f8c32369e89e7c52cee73e07930ff91185e1ab93f4f3"
+  },
+  "runtime": {
+    "url": "https://github.com/bd-loser/opencode-bionic/releases/download/v2.1.4-beta.4b83402a/opencode_2.1.4-beta.4b83402a_aarch64.deb",
+    "sha256": "57f30cd2288bfa6f454a4c98bf35da823e21877e38ad25fae5ecb6e1f447bed9",
+    "binary_sha256": "066eedd9e883d243d4da66d2495d68f7329185df64883acbe3e3389437e6c2de"
+  }
+}

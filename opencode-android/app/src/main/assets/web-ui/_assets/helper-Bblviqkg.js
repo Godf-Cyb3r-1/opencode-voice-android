@@ -1,0 +1,2 @@
+import{I as e,O as t,P as n,R as r,rt as i}from"./store-CKe_GNKE.js";function a(a){let o=e();return{provider:e=>{let i=a.init(e);if(!(a.gate??!0))return n(o.Provider,{value:i,get children(){return e.children}});let s=r(()=>{let e=i.ready;return e===void 0||(typeof e==`function`?e():e)});return n(t,{get when(){return s()},get children(){return n(o.Provider,{value:i,get children(){return e.children}})}})},use(){let e=i(o);if(!e)throw Error(`${a.name} context must be used within a context provider`);return e}}}export{a as t};
+//# sourceMappingURL=helper-Bblviqkg.js.map

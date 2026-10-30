@@ -1,0 +1,683 @@
+package com.termux.app;
+
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.speech.RecognizerIntent;
+import android.speech.tts.TextToSpeech;
+import java.util.ArrayList;
+import java.util.Locale;
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.webkit.ConsoleMessage;
+import android.webkit.CookieManager;
+import android.webkit.HttpAuthHandler;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.PopupMenu;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import com.termux.R;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+
+/** Android host for upstream OpenCode's bundled graphical interface. */
+public final class OpenCodeWebActivity extends Activity {
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Set<String> assets = new HashSet<>();
+    private WebView web;
+    private LinearLayout loading;
+    private TextView message;
+    private TextView status;
+    private ProgressBar progress;
+    private Button retry;
+    private String loadedOrigin;
+    private ValueCallback<Uri[]> fileCallback;
+    private long startedAt;
+    private String rendererError = "";
+    private boolean rendererGone;
+    private boolean bootstrapped;
+    private long pausedAt;
+    private final java.util.concurrent.ExecutorService requests = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private static final int PICK_FILE = 4120;
+    private static final int VOICE_REQUEST = 4121;
+    private TextToSpeech speech;
+    private boolean autoNarrate = false;
+    private String lastNarrated = "";
+    private final Runnable narrationPoll = new Runnable() {
+        @Override public void run() {
+            if (!autoNarrate || isFinishing() || isDestroyed()) return;
+            if (web != null && loadedOrigin != null && !rendererGone) {
+                // Best-effort DOM fallback; upstream UI changes may require selector updates.
+                web.evaluateJavascript("(function(){let a=[...document.querySelectorAll('[data-role=assistant], [data-message-role=assistant], [data-testid*=assistant]')];let n=a[a.length-1];return n?n.innerText.trim().slice(0,3000):''})()", result -> {
+                    try {
+                        Object value = new org.json.JSONTokener(result).nextValue();
+                        String message = value == null ? "" : value.toString().trim();
+                        if (!message.isEmpty() && !message.equals(lastNarrated) &&
+                                !message.endsWith("▍") && !message.endsWith("…")) {
+                            // Delay speaking until the same text remains stable across polls.
+                            if (message.equals(pendingNarration)) {
+                                lastNarrated = message;
+                                pendingNarration = "";
+                                if (speech != null) speech.speak(message, TextToSpeech.QUEUE_FLUSH, null, "oc-auto");
+                            } else pendingNarration = message;
+                        }
+                    } catch (Exception ignored) { }
+                });
+            }
+            handler.postDelayed(this, 1500);
+        }
+    };
+    private String pendingNarration = "";
+
+    private final Runnable poll = new Runnable() {
+        @Override public void run() {
+            if (isFinishing() || isDestroyed()) return;
+            String state = OpenCodeWebService.state;
+            if ("unresponsive".equals(state) && loadedOrigin != null) {
+                status.setText(R.string.oc_unresponsive_short);
+            } else if ("ready".equals(state)) {
+                status.setText(R.string.oc_on_device);
+                String origin = OpenCodeWebService.origin();
+                if (!rendererGone && !origin.equals(loadedOrigin)) {
+                    loadedOrigin = origin;
+                    loadRoute(OpenCodeWebService.preferences(OpenCodeWebActivity.this).getString("last_route", "/"));
+                }
+            } else {
+                loading.setVisibility(View.VISIBLE);
+                status.setText(R.string.oc_engine_starting);
+                boolean failed = "error".equals(state) || "stopped".equals(state);
+                progress.setVisibility(failed ? View.GONE : View.VISIBLE);
+                retry.setVisibility(failed ? View.VISIBLE : View.GONE);
+                String description = OpenCodeWebService.detail;
+                message.setText(failed ? getString(R.string.oc_start_failed, description) :
+                    getString(R.string.oc_waiting, (System.currentTimeMillis() - startedAt) / 1000));
+                if ("slow".equals(state) || "upgrading".equals(state)) message.setText(description);
+            }
+            handler.postDelayed(this, 500);
+        }
+    };
+
+    @SuppressLint("SetJavaScriptEnabled")
+    @Override public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().setStatusBarColor(Color.rgb(18, 18, 18));
+        getWindow().setNavigationBarColor(Color.rgb(18, 18, 18));
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.rgb(18, 18, 18));
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(dp(16), 0, dp(8), 0);
+        TextView title = new TextView(this);
+        title.setText(R.string.oc_title);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(16);
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        status = new TextView(this);
+        status.setTextColor(Color.rgb(160, 160, 160));
+        status.setTextSize(11);
+        toolbar.addView(status);
+        speech = new TextToSpeech(this, statusCode -> {
+            if (statusCode == TextToSpeech.SUCCESS && speech != null) speech.setLanguage(Locale.getDefault());
+        });
+        Button mic = new Button(this);
+        mic.setText("🎤");
+        mic.setContentDescription("Dictate to OpenCode");
+        mic.setTextColor(Color.WHITE);
+        mic.setBackgroundColor(Color.TRANSPARENT);
+        mic.setOnClickListener(v -> dictate());
+        toolbar.addView(mic, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        Button speak = new Button(this);
+        speak.setText("🔊");
+        speak.setContentDescription("Read selected text aloud");
+        speak.setTextColor(Color.WHITE);
+        speak.setBackgroundColor(Color.TRANSPARENT);
+        speak.setOnClickListener(v -> readSelection());
+        toolbar.addView(speak, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        Button auto = new Button(this);
+        auto.setText("◉");
+        auto.setContentDescription("Toggle automatic narration");
+        auto.setTextColor(Color.LTGRAY);
+        auto.setBackgroundColor(Color.TRANSPARENT);
+        auto.setOnClickListener(v -> {
+            autoNarrate = !autoNarrate;
+            auto.setTextColor(autoNarrate ? Color.GREEN : Color.LTGRAY);
+            handler.removeCallbacks(narrationPoll);
+            if (autoNarrate) handler.post(narrationPoll);
+            else if (speech != null) speech.stop();
+        });
+        toolbar.addView(auto, new LinearLayout.LayoutParams(dp(40), dp(44)));
+        Button context = new Button(this);
+        context.setText(R.string.oc_context);
+        context.setTextColor(Color.WHITE);
+        context.setTextSize(12);
+        context.setBackgroundColor(Color.TRANSPARENT);
+        context.setOnClickListener(v -> showContext());
+        toolbar.addView(context, new LinearLayout.LayoutParams(dp(88), dp(44)));
+        Button menu = new Button(this);
+        menu.setText("\u22ee");
+        menu.setTextColor(Color.WHITE);
+        menu.setBackgroundColor(Color.TRANSPARENT);
+        menu.setContentDescription(getString(R.string.oc_controls));
+        toolbar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        menu.setOnClickListener(this::controls);
+        root.addView(toolbar);
+        FrameLayout body = new FrameLayout(this);
+        web = new WebView(this);
+        web.setBackgroundColor(Color.rgb(18, 18, 18));
+        if (Build.VERSION.SDK_INT >= 26) web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        if (OpenCodeWebService.preferences(this).getInt("ui_generation", 0) != 3)
+            OpenCodeWebService.preferences(this).edit().putInt("ui_generation", 3).putString("last_route", "/").apply();
+        WebSettings settings = web.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(true);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setSupportMultipleWindows(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setTextZoom(100);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
+        web.setWebViewClient(new LocalClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (fileCallback != null) fileCallback.onReceiveValue(null);
+                fileCallback = callback;
+                try { startActivityForResult(params.createIntent(), PICK_FILE); return true; }
+                catch (Exception unavailable) { fileCallback = null; return false; }
+            }
+            @Override public boolean onCreateWindow(WebView view, boolean dialog, boolean userGesture, android.os.Message result) {
+                if (!userGesture) return false;
+                WebView popup = new WebView(OpenCodeWebActivity.this);
+                popup.setWebViewClient(new WebViewClient() {
+                    @Override public boolean shouldOverrideUrlLoading(WebView child, WebResourceRequest request) {
+                        external(request.getUrl());
+                        handler.post(child::destroy);
+                        return true;
+                    }
+                });
+                ((WebView.WebViewTransport) result.obj).setWebView(popup);
+                result.sendToTarget();
+                return true;
+            }
+            @Override public boolean onConsoleMessage(ConsoleMessage line) {
+                if (line.messageLevel() == ConsoleMessage.MessageLevel.ERROR)
+                    rendererError = redact(line.message());
+                return false;
+            }
+        });
+        body.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        loading = new LinearLayout(this);
+        loading.setOrientation(LinearLayout.VERTICAL);
+        loading.setGravity(Gravity.CENTER);
+        loading.setPadding(dp(24), dp(24), dp(24), dp(24));
+        loading.setBackgroundColor(Color.rgb(18, 18, 18));
+        progress = new ProgressBar(this);
+        loading.addView(progress);
+        message = new TextView(this);
+        message.setText(R.string.oc_preparing);
+        message.setTextColor(Color.WHITE);
+        message.setGravity(Gravity.CENTER);
+        message.setPadding(0, dp(20), 0, dp(20));
+        loading.addView(message);
+        retry = new Button(this);
+        retry.setText(R.string.oc_start_engine);
+        retry.setVisibility(View.GONE);
+        retry.setOnClickListener(v -> begin());
+        loading.addView(retry);
+        Button logs = new Button(this);
+        logs.setText(R.string.oc_show_log);
+        logs.setOnClickListener(v -> logs());
+        loading.addView(logs);
+        Button terminal = new Button(this);
+        terminal.setText(R.string.oc_recovery_terminal);
+        terminal.setOnClickListener(v -> terminal());
+        loading.addView(terminal);
+        body.addView(loading, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+        setContentView(root);
+        try (InputStream input = getAssets().open("web-ui/manifest.json")) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192]; int count;
+            while ((count = input.read(buffer)) > 0) out.write(buffer, 0, count);
+            JSONArray files = new JSONObject(out.toString("UTF-8")).getJSONArray("files");
+            for (int i = 0; i < files.length(); i++) assets.add(files.getString(i));
+        } catch (Exception missing) {
+            progress.setVisibility(View.GONE);
+            message.setText(R.string.oc_missing_ui);
+            return;
+        }
+        startedAt = System.currentTimeMillis();
+        TermuxInstaller.setupBootstrapIfNeeded(this, () -> { bootstrapped = true; begin(); offerBackgroundAccess(); });
+    }
+
+    private void begin() {
+        if (rendererGone) { recreate(); return; }
+        startedAt = System.currentTimeMillis();
+        loadedOrigin = null;
+        loading.setVisibility(View.VISIBLE);
+        progress.setVisibility(View.VISIBLE);
+        message.setText(R.string.oc_preparing);
+        Intent service = new Intent(this, OpenCodeWebService.class);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
+        handler.removeCallbacks(poll);
+        handler.postDelayed(poll, 300);
+    }
+
+    private void controls(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(0, 1, 0, R.string.oc_reload);
+        menu.getMenu().add(0, 2, 1, R.string.oc_default_project);
+        menu.getMenu().add(0, 3, 2, R.string.oc_show_log);
+        menu.getMenu().add(0, 4, 3, R.string.oc_recovery_terminal);
+        menu.getMenu().add(0, 5, 7, R.string.oc_stop);
+        menu.getMenu().add(0, 6, 4, R.string.oc_background_settings);
+        menu.getMenu().add(0, 7, 5, R.string.oc_background_protection)
+            .setCheckable(true).setChecked(OpenCodeWebService.preferences(this).getBoolean("background_protection", true));
+        menu.getMenu().add(0, 8, 6, R.string.oc_context);
+        menu.getMenu().add(0, 9, 8, R.string.oc_about);
+        menu.getMenu().add(0, 10, 9, R.string.oc_status);
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1: if (rendererGone) recreate(); else if (loadedOrigin == null) begin(); else web.reload(); break;
+                case 2:
+                    if (loadedOrigin != null) {
+                        loadRoute("/new-session");
+                    }
+                    break;
+                case 3: logs(); break;
+                case 4: terminal(); break;
+                case 6: backgroundSettings(); break;
+                case 7: startService(new Intent(this, OpenCodeWebService.class).setAction(OpenCodeWebService.PROTECTION)); break;
+                case 8: showContext(); break;
+                case 9: about(); break;
+                case 10: recoveryStatus(); break;
+                case 5: startService(new Intent(this, OpenCodeWebService.class).setAction(OpenCodeWebService.STOP)); loadedOrigin = null; break;
+            }
+            return true;
+        });
+        menu.show();
+    }
+
+    private void loadRoute(String route) {
+        if (loadedOrigin == null || rendererGone) return;
+        if (!route.startsWith("/") || route.startsWith("//") || route.startsWith("/api/")) route = "/";
+        Uri.Builder uri = Uri.parse(loadedOrigin + route).buildUpon();
+        uri.appendQueryParameter("auth_token", OpenCodeWebService.token(this));
+        web.loadUrl(uri.build().toString());
+    }
+
+    private void rememberRoute() {
+        if (rendererGone || web.getUrl() == null) return;
+        Uri current = Uri.parse(web.getUrl());
+        if (!local(current)) return;
+        // A session route needs no query credentials or provider callback parameters.
+        String path = current.getEncodedPath();
+        if (path != null && path.startsWith("/")) OpenCodeWebService.preferences(this).edit().putString("last_route", path).apply();
+    }
+
+    private void offerBackgroundAccess() {
+        android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+        if (power.isIgnoringBatteryOptimizations(getPackageName()) || OpenCodeWebService.preferences(this).getBoolean("battery_prompted", false)) return;
+        OpenCodeWebService.preferences(this).edit().putBoolean("battery_prompted", true).apply();
+        new AlertDialog.Builder(this).setTitle(R.string.oc_background_settings).setMessage(R.string.oc_background_explanation)
+            .setPositiveButton(R.string.oc_open_settings, (dialog, which) -> backgroundSettings())
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void backgroundSettings() {
+        try {
+            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+            Intent intent = power.isIgnoringBatteryOptimizations(getPackageName())
+                ? new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))
+                : new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception unavailable) {
+            startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        }
+    }
+
+    private void showContext() {
+        String id = null;
+        if (web.getUrl() != null && !rendererGone) {
+            Uri uri = Uri.parse(web.getUrl());
+            if (local(uri)) {
+                java.util.List<String> parts = uri.getPathSegments();
+                for (int i = 0; i + 1 < parts.size(); i++) if ("session".equals(parts.get(i))) id = parts.get(i + 1);
+            }
+        }
+        if (id == null || !id.matches("[A-Za-z0-9_:-]{6,160}")) {
+            new AlertDialog.Builder(this).setTitle(R.string.oc_context).setMessage(R.string.oc_context_choose).setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+        TextView text = new TextView(this);
+        text.setText(R.string.oc_context_loading);
+        text.setTextIsSelectable(true);
+        text.setTextSize(12);
+        text.setPadding(dp(16), dp(16), dp(16), dp(16));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(text);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(R.string.oc_context).setView(scroll).setPositiveButton(android.R.string.ok, null).create();
+        dialog.show();
+        String session = id;
+        requests.execute(() -> {
+            String content;
+            try {
+                JSONObject data = new JSONObject(OpenCodeWebService.request(this, "/api/session/" + Uri.encode(session) + "/context", 3 * 1024 * 1024));
+                String json = data.toString(2);
+                content = getString(R.string.oc_context_note) + "\n\n" + json.substring(0, Math.min(json.length(), 24000));
+                if (json.length() > 24000) content += "\n\n" + getString(R.string.oc_context_truncated);
+            } catch (Exception error) { content = getString(R.string.oc_context_error, error.getMessage()); }
+            String result = content;
+            handler.post(() -> { if (!isFinishing() && dialog.isShowing()) text.setText(result); });
+        });
+    }
+
+    private String assetText(String path) throws Exception {
+        try (InputStream input = getAssets().open(path); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192]; int count;
+            while ((count = input.read(buffer)) != -1) out.write(buffer, 0, count);
+            return out.toString("UTF-8");
+        }
+    }
+
+    private void about() {
+        String description;
+        try {
+            JSONObject ui = new JSONObject(assetText("web-ui/manifest.json"));
+            JSONObject engine = new JSONObject(assetText("engine/manifest.json"));
+            description = getString(R.string.oc_about_details, getPackageManager().getPackageInfo(getPackageName(), 0).versionName,
+                OpenCodeWebService.engineVersion.isEmpty() ? getString(R.string.oc_not_observed) : OpenCodeWebService.engineVersion,
+                ui.getString("opencode_version"), ui.optString("android_revision", "unknown"), ui.getString("opencode_commit"), engine.getString("sha256"));
+        } catch (Exception error) { description = getString(R.string.oc_about_unavailable); }
+        new AlertDialog.Builder(this).setTitle(R.string.oc_about).setMessage(description).setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    private void recoveryStatus() {
+        android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+        long seconds = OpenCodeWebService.lastHealthy == 0 ? -1 : Math.max(0, (android.os.SystemClock.elapsedRealtime() - OpenCodeWebService.lastHealthy) / 1000);
+        String report = getString(R.string.oc_status_report, OpenCodeWebService.state, OpenCodeWebService.engineVersion,
+            seconds, OpenCodeWebService.activeSessions, String.valueOf(power.isIgnoringBatteryOptimizations(getPackageName())),
+            String.valueOf(OpenCodeWebService.preferences(this).getBoolean("background_protection", true)), Build.VERSION.SDK_INT,
+            getFilesDir().getUsableSpace() / (1024 * 1024));
+        new AlertDialog.Builder(this).setTitle(R.string.oc_status).setMessage(report)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.oc_copy_status, (dialog, which) -> {
+                android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.oc_status), report));
+            })
+            .setNegativeButton(R.string.oc_reload, (dialog, which) -> {
+                if (rendererGone) recreate(); else if (loadedOrigin != null) web.reload();
+            }).show();
+    }
+
+    private void terminal() {
+        if ("upgrading".equals(OpenCodeWebService.state)) {
+            new AlertDialog.Builder(this).setMessage(R.string.oc_upgrading).setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+        startActivity(new Intent(this, TermuxActivity.class));
+    }
+
+    private String redact(String text) {
+        String password = OpenCodeWebService.preferences(this).getString("password", "");
+        if (!password.isEmpty()) text = text.replace(password, "[redacted]");
+        return text.replace(OpenCodeWebService.token(this), "[redacted]");
+    }
+
+    private void logs() {
+        TextView text = new TextView(this);
+        text.setText(redact(getString(R.string.oc_engine_version, OpenCodeWebService.engineVersion) + "\n" +
+            getString(OpenCodeWebService.preferences(this).getBoolean("background_protection", true) ? R.string.oc_protected : R.string.oc_unprotected) + "\n\n" + OpenCodeWebService.logTail(this) + (rendererError.isEmpty() ? "" : "\n\nWebView: " + rendererError)));
+        text.setTextIsSelectable(true);
+        text.setPadding(dp(16), dp(16), dp(16), dp(16));
+        text.setTextSize(12);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(text);
+        new AlertDialog.Builder(this).setTitle(R.string.oc_show_log).setView(scroll).setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    private boolean local(Uri uri) {
+        return "http".equals(uri.getScheme()) && "127.0.0.1".equals(uri.getHost()) && uri.getPort() == OpenCodeWebService.port;
+    }
+
+    private void external(Uri uri) {
+        if (!("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()) || "mailto".equals(uri.getScheme()))) return;
+        try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); } catch (Exception ignored) {}
+    }
+
+    private final class LocalClient extends WebViewClient {
+        @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            if (local(request.getUrl())) return false;
+            if (request.isForMainFrame() && request.hasGesture()) external(request.getUrl());
+            return true;
+        }
+
+        @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            Uri uri = request.getUrl();
+            if (!local(uri) || !"GET".equals(request.getMethod())) return null;
+            String path = uri.getPath();
+            if (path == null) path = "/";
+            String file = path.substring(1);
+            if (request.isForMainFrame()) file = "index.html";
+            if (!assets.contains(file)) {
+                if (!path.startsWith("/assets/") && !path.startsWith("/_assets/") && !path.startsWith("/icons/")) return null;
+                return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", new HashMap<>(), new ByteArrayInputStream(new byte[0]));
+            }
+            try {
+                HashMap<String, String> headers = new HashMap<>();
+                headers.put("Cache-Control", ("index.html".equals(file) || "sw.js".equals(file)) ? "no-store" : "public, max-age=31536000, immutable");
+                headers.put("X-Content-Type-Options", "nosniff");
+                headers.put("Referrer-Policy", "no-referrer");
+                return new WebResourceResponse(mime(file), null, 200, "OK", headers, getAssets().open("web-ui/" + file));
+            } catch (Exception missing) {
+                return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", new HashMap<>(), new ByteArrayInputStream(new byte[0]));
+            }
+        }
+
+        @Override public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler auth, String host, String realm) {
+            auth.cancel();
+        }
+
+        @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) {
+            rememberRoute();
+        }
+
+        @Override public void onPageFinished(WebView view, String url) {
+            if (!local(Uri.parse(url))) return;
+
+            checkRender(0);
+        }
+
+        @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+            if (!request.isForMainFrame()) return;
+            loading.setVisibility(View.VISIBLE);
+            progress.setVisibility(View.GONE);
+            retry.setVisibility(View.VISIBLE);
+            message.setText(getString(R.string.oc_web_error, error.getDescription()));
+        }
+
+        @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+            rendererGone = true;
+            ((ViewGroup) web.getParent()).removeView(web);
+            web.destroy();
+            loading.setVisibility(View.VISIBLE);
+            progress.setVisibility(View.GONE);
+            retry.setVisibility(View.VISIBLE);
+            message.setText(R.string.oc_renderer_gone);
+            return true;
+        }
+    }
+
+    private void checkRender(int attempt) {
+        if (isFinishing() || isDestroyed() || rendererGone) return;
+        web.evaluateJavascript("document.querySelector('#root')?.children.length>0", value -> {
+            if ("true".equals(value)) loading.setVisibility(View.GONE);
+            else if (attempt < 60) handler.postDelayed(() -> checkRender(attempt + 1), 500);
+            else {
+                progress.setVisibility(View.GONE);
+                message.setText(R.string.oc_ui_timeout);
+                retry.setVisibility(View.VISIBLE);
+            }
+        });
+    }
+
+    private static String mime(String file) {
+        if (file.endsWith(".html")) return "text/html";
+        if (file.endsWith(".js") || file.endsWith(".mjs")) return "text/javascript";
+        if (file.endsWith(".css")) return "text/css";
+        if (file.endsWith(".json") || file.endsWith(".webmanifest")) return "application/json";
+        if (file.endsWith(".wasm")) return "application/wasm";
+        if (file.endsWith(".svg")) return "image/svg+xml";
+        if (file.endsWith(".png")) return "image/png";
+        if (file.endsWith(".jpg") || file.endsWith(".jpeg")) return "image/jpeg";
+        if (file.endsWith(".woff2")) return "font/woff2";
+        if (file.endsWith(".woff")) return "font/woff";
+        if (file.endsWith(".ttf")) return "font/ttf";
+        if (file.endsWith(".ico")) return "image/x-icon";
+        if (file.endsWith(".aac")) return "audio/aac";
+        return "application/octet-stream";
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        if (request == VOICE_REQUEST) {
+            if (result == RESULT_OK && data != null) {
+                ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+                if (matches != null && !matches.isEmpty()) insertTranscript(matches.get(0));
+            }
+            return;
+        }
+
+        super.onActivityResult(request, result, data);
+        if (request == PICK_FILE && fileCallback != null) {
+            fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
+            fileCallback = null;
+        }
+    }
+
+    @Override public void onBackPressed() {
+        if (!rendererGone && web.canGoBack()) web.goBack(); else super.onBackPressed();
+    }
+
+    private void dictate() {
+        if (speech != null) speech.stop();
+        pendingNarration = "";
+        try {
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag());
+            intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to OpenCode");
+            startActivityForResult(intent, VOICE_REQUEST);
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setMessage("No speech recognition activity is available on this device.")
+                .setPositiveButton("OK", null).show();
+        }
+    }
+
+    private void insertTranscript(String transcript) {
+        if (web == null || loadedOrigin == null) {
+            new AlertDialog.Builder(this).setMessage(transcript).setPositiveButton("OK", null).show();
+            return;
+        }
+        String quoted = JSONObject.quote(transcript);
+        // Dispatch native input events so the reactive OpenCode composer sees the change.
+        String js = "(function(){const e=document.querySelector('[contenteditable=\"true\"][data-placeholder], [role=\"textbox\"][contenteditable=\"true\"], textarea, [contenteditable=\"true\"]');" +
+            "if(!e)return false;e.focus();if(e.isContentEditable){document.execCommand('insertText',false," + quoted + ");}" +
+            "else{const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;setter.call(e," + quoted + ");}" +
+            "e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:" + quoted + "}));return true;})()";
+        web.evaluateJavascript(js, result -> {
+            if (!"true".equals(result)) new AlertDialog.Builder(this).setTitle("Transcription")
+                .setMessage(transcript).setPositiveButton("Copy", (d,w) -> {
+                    android.content.ClipboardManager c = (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                    c.setPrimaryClip(android.content.ClipData.newPlainText("Voice transcript", transcript));
+                }).setNegativeButton("Close", null).show();
+        });
+    }
+
+    private void readSelection() {
+        if (speech == null || web == null) return;
+        web.evaluateJavascript("(function(){return window.getSelection().toString().trim()})()", json -> {
+            try {
+                String selected = new org.json.JSONTokener(json).nextValue().toString();
+                if (selected.isEmpty()) {
+                    new AlertDialog.Builder(this).setMessage("Select text in the conversation first, then tap the speaker.")
+                        .setPositiveButton("OK", null).show();
+                } else speech.speak(selected, TextToSpeech.QUEUE_FLUSH, null, "oc-selected");
+            } catch (Exception ignored) { }
+        });
+    }
+
+    @Override protected void onStart() {
+        super.onStart();
+        if (bootstrapped) { handler.removeCallbacks(poll); handler.post(poll); }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (web == null || rendererGone) return;
+        web.onResume();
+        if (loadedOrigin != null && "ready".equals(OpenCodeWebService.state)) {
+            // Preserve client-only side questions and drafts when returning to the app.
+            web.evaluateJavascript("window.dispatchEvent(new Event('online')); window.dispatchEvent(new Event('focus'));", null);
+        }
+        pausedAt = 0;
+    }
+
+    @Override protected void onPause() {
+        rememberRoute();
+        pausedAt = android.os.SystemClock.elapsedRealtime();
+        if (!rendererGone) web.onPause();
+        super.onPause();
+    }
+
+    @Override protected void onStop() {
+        handler.removeCallbacks(poll);
+        super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        handler.removeCallbacks(narrationPoll);
+        handler.removeCallbacksAndMessages(null);
+        requests.shutdownNow();
+        if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
+        if (fileCallback != null) fileCallback.onReceiveValue(null);
+        if (!rendererGone) web.destroy();
+        super.onDestroy();
+    }
+
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+}

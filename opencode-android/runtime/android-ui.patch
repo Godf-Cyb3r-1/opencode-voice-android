@@ -1,0 +1,251 @@
+diff --git a/packages/app/e2e/regression/btw-sidebar.spec.ts b/packages/app/e2e/regression/btw-sidebar.spec.ts
+index 0472b77..f5d2852 100644
+--- a/packages/app/e2e/regression/btw-sidebar.spec.ts
++++ b/packages/app/e2e/regression/btw-sidebar.spec.ts
+@@ -270,3 +270,43 @@ test("answers /btw in the side panel without admitting a prompt", async ({ page
+   await expect(panel.getByText("exponential backoff", { exact: false })).toBeVisible()
+   expect(ownerWarnings).toEqual([])
+ })
++
++
++test("mobile side questions reopen, cancel independently, and never submit a main prompt", async ({ page }) => {
++  await page.setViewportSize({ width: 390, height: 844 })
++
++  const prompts: unknown[] = []
++  const held = Promise.withResolvers<void>()
++
++  const { editor } = await openSession(page, {
++    name: "MobileBtw",
++    onPrompt: (input) => prompts.push(input),
++    generate: async (input) => {
++      if (input.prompt.includes("slow question")) await held.promise
++
++      return { text: input.prompt.includes("slow question") ? "Cancelled answer" : "Mobile answer" }
++    },
++  })
++
++  const navigation = page.getByRole("tablist", { name: "Session view", exact: true })
++  const panel = page.locator('[data-slot="session-btw-panel"]')
++
++  await editor.fill("/btw first question")
++  await editor.press("Enter")
++  await expect(panel.getByText("Mobile answer", { exact: true })).toBeVisible()
++  await navigation.getByRole("tab", { name: "Session", exact: true }).click()
++  await editor.fill("/btw slow question")
++  await editor.press("Enter")
++  await panel.getByRole("button", { name: "Cancel side question", exact: true }).click()
++  held.resolve()
++  await expect(panel.getByRole("button", { name: "Retry", exact: true })).toBeVisible()
++  await expect(panel.getByText("Cancelled answer", { exact: true })).toHaveCount(0)
++  await panel.getByRole("combobox", { name: "Side questions", exact: true }).selectOption({ label: "first question" })
++  await expect(panel.getByText("Mobile answer", { exact: true })).toBeVisible()
++  await page.reload()
++  await navigation.getByRole("tab", { name: "More...", exact: true }).click()
++  await page.getByRole("dialog", { name: "More options", exact: true }).getByRole("button", { name: "Side questions", exact: true }).click()
++  await panel.getByRole("combobox", { name: "Side questions", exact: true }).selectOption({ label: "first question" })
++  await expect(panel.getByText("Mobile answer", { exact: true })).toBeVisible()
++  expect(prompts).toEqual([])
++})
+diff --git a/packages/app/src/entry.tsx b/packages/app/src/entry.tsx
+index b9760dd..6048da8 100644
+--- a/packages/app/src/entry.tsx
++++ b/packages/app/src/entry.tsx
+@@ -51,7 +51,7 @@ const clearAuthToken = () => {
+ 
+ const web = createWebPlatform(pkg.version)
+ 
+-if (import.meta.env.PROD && "serviceWorker" in navigator) {
++if (import.meta.env.PROD && import.meta.env.VITE_OPENCODE_ANDROID_HOST !== "1" && "serviceWorker" in navigator) {
+   window.addEventListener("load", () => void navigator.serviceWorker.register("/sw.js"), { once: true })
+ }
+ 
+diff --git a/packages/gui-extensions/src/btw/i18n/en.ts b/packages/gui-extensions/src/btw/i18n/en.ts
+index 5da51e1..0af493d 100644
+--- a/packages/gui-extensions/src/btw/i18n/en.ts
++++ b/packages/gui-extensions/src/btw/i18n/en.ts
+@@ -4,6 +4,10 @@ export default {
+   "tab.title": "/btw",
+   "question.required": "Add a question after /btw",
+   error: "Couldn’t answer that question",
++  "mobile.title": "Side questions",
++  "mobile.empty": "Return to Session and type /btw followed by your question. Answers stay separate from the main conversation.",
++  "mobile.cancel": "Cancel side question",
++  "mobile.forget": "Forget this answer",
+   retry: "Retry",
+   copy: "Copy answer",
+ }
+diff --git a/packages/gui-extensions/src/btw/model.ts b/packages/gui-extensions/src/btw/model.ts
+index 9c38771..2a68483 100644
+--- a/packages/gui-extensions/src/btw/model.ts
++++ b/packages/gui-extensions/src/btw/model.ts
+@@ -121,7 +121,7 @@ export function createBtw(ctx: SetupContext<typeof Btw>) {
+           model: current.model,
+         })
+       })
+-      ctx.layout.open(`${ctx.id}:${id}`, session, { tab: "select" })
++      ctx.layout.open(`${ctx.id}:${id}`, session, { tab: ctx.layout.narrow() ? "open" : "select" })
+     })
+     void generate(session, id, question)
+   }
+@@ -130,6 +130,7 @@ export function createBtw(ctx: SetupContext<typeof Btw>) {
+     ask,
+     saved,
+     pending,
++    cancel: stop,
+     entry,
+     question: (session: MountedSession, id: string) => entry(session, id)?.question,
+     answer: (session: MountedSession, id: string) => entry(session, id)?.answer,
+diff --git a/packages/gui-extensions/src/btw/panel.tsx b/packages/gui-extensions/src/btw/panel.tsx
+index 84df619..bd5d410 100644
+--- a/packages/gui-extensions/src/btw/panel.tsx
++++ b/packages/gui-extensions/src/btw/panel.tsx
+@@ -1,4 +1,4 @@
+-import { createMemo, Match, on, Show, Switch } from "solid-js"
++import { createMemo, For, Match, on, Show, Switch } from "solid-js"
+ import { createStore } from "solid-js/store"
+ import { Button } from "@opencode/ui/button"
+ import { useI18n } from "@opencode/ui/context/i18n"
+@@ -11,11 +11,29 @@ import { Markdown } from "@opencode/session-ui/markdown"
+ import { useExtension, type MountedSession } from "../sdk"
+ import type { BtwModel } from "./model"
+ 
+-export default function SessionBtwPanel(props: { btw: BtwModel; session: MountedSession; id: string }) {
++export default function SessionBtwPanel(props: { btw: BtwModel; session: MountedSession; id: string; mobile?: boolean }) {
+   const ctx = useExtension()
+   const i18n = useI18n()
+   const system = ctx.system
+-  const chat = () => props.btw.entry(props.session, props.id)
++  const [selection, setSelection] = createStore<{ session?: string; id?: string; latest?: string }>({})
++  const chats = () => props.btw.saved(props.session).value?.chats ?? []
++
++  const selected = () => {
++    if (!props.mobile) return props.id
++    const latest = chats().at(-1)?.id
++
++    if (selection.session === props.session.key && selection.latest === latest && chats().some((item) => item.id === selection.id))
++      return selection.id
++
++    return latest
++  }
++
++  const chat = () => {
++    const id = selected()
++
++    return id ? props.btw.entry(props.session, id) : undefined
++  }
++
+   const question = () => chat()?.question
+   const answer = () => chat()?.answer
+   // New primitive tokens clear the copied mark when text changes without being proxied by the store.
+@@ -100,6 +118,30 @@ export default function SessionBtwPanel(props: { btw: BtwModel; session: Mounted
+ 
+   return (
+     <div class="flex h-full min-h-0 flex-col bg-v2-background-bg-base" data-slot="session-btw-panel">
++      <Show when={props.mobile}>
++        <div class="flex flex-col gap-2 px-4 py-3 border-b border-border-base">
++          <label class="text-13-regular">
++            {ctx.t("mobile.title")}
++            <select
++              class="w-full bg-v2-background-bg-base text-text-base p-2"
++              aria-label={ctx.t("mobile.title")}
++              value={selected() ?? ""}
++              onChange={(event) => setSelection({ session: props.session.key, id: event.currentTarget.value, latest: chats().at(-1)?.id })}
++            >
++              <For each={chats()}>{(item) => <option value={item.id}>{item.question}</option>}</For>
++            </select>
++          </label>
++          <Show when={!chat()}><div class="text-13-regular text-text-weak">{ctx.t("mobile.empty")}</div></Show>
++          <Show when={chat()}>
++            <div class="flex gap-2">
++              <Show when={props.btw.pending(selected() ?? "")}>
++                <Button size="small" variant="outline" onClick={() => props.btw.cancel(selected() ?? "")}>{ctx.t("mobile.cancel")}</Button>
++              </Show>
++              <Button size="small" variant="outline" onClick={() => props.btw.remove(props.session, selected() ?? "")}>{ctx.t("mobile.forget")}</Button>
++            </div>
++          </Show>
++        </div>
++      </Show>
+       <div class="min-h-0 flex-1 overflow-y-auto" data-scrollable>
+         <div class="min-w-0 w-full max-w-full px-4 pt-6 pb-8 md:max-w-session md:mx-auto md:px-6">
+           <div data-component="user-message">
+@@ -147,7 +189,7 @@ export default function SessionBtwPanel(props: { btw: BtwModel; session: Mounted
+           </div>
+ 
+           <Switch>
+-            <Match when={props.btw.pending(props.id)}>
++            <Match when={props.btw.pending(selected() ?? "")}>
+               <div
+                 data-component="session-working"
+                 role="status"
+@@ -156,10 +198,10 @@ export default function SessionBtwPanel(props: { btw: BtwModel; session: Mounted
+                 <TextShimmer text={ctx.t("session.timeline.working")} active />
+               </div>
+             </Match>
+-            <Match when={props.btw.error(props.session, props.id)}>
++            <Match when={props.btw.error(props.session, selected() ?? "")}>
+               <div class="flex flex-col items-start gap-3 pt-4">
+                 <div class="text-13-regular text-text-weak">{ctx.t("error")}</div>
+-                <Button size="small" variant="outline" onClick={() => props.btw.retry(props.session, props.id)}>
++                <Button size="small" variant="outline" onClick={() => props.btw.retry(props.session, selected() ?? "")}>
+                   {ctx.t("retry")}
+                 </Button>
+               </div>
+diff --git a/packages/gui-extensions/src/btw/renderer.tsx b/packages/gui-extensions/src/btw/renderer.tsx
+index ba2dc44..10b09f4 100644
+--- a/packages/gui-extensions/src/btw/renderer.tsx
++++ b/packages/gui-extensions/src/btw/renderer.tsx
+@@ -1,13 +1,12 @@
+ import { createMemo, lazy, onCleanup, Suspense } from "solid-js"
+ import { Icon } from "@opencode/ui/icon"
+-import { Command, createKeyed, onIdle, Panel, type PanelTab, type Setup } from "../sdk"
++import { Command, createKeyed, onIdle, Panel, usePanel, type PanelTab, type Setup } from "../sdk"
+ import type Btw from "./index"
+ import { createBtw } from "./model"
+ 
+ const setup: Setup<typeof Btw> = (ctx) => {
+   const SessionBtwPanel = lazy(() => import("./panel"))
+   onCleanup(onIdle(() => void SessionBtwPanel.preload()))
+-  const layout = ctx.layout
+   const sessions = ctx.sessions
+   const btw = createBtw(ctx)
+   // Changes when a session mounts or unmounts, not on every switch between sessions.
+@@ -37,8 +36,8 @@ const setup: Setup<typeof Btw> = (ctx) => {
+       section: "session",
+       slash: { name: "btw", arguments: true },
+       hidden: true,
+-      // Offered only while a session is open in a desktop-width window.
+-      enabled: !layout.narrow() && mounted(),
++      // Reuse upstream side-question generation at every screen width.
++      enabled: mounted(),
+       run: (input) => btw.ask(input),
+     }),
+   )
+@@ -47,6 +46,7 @@ const setup: Setup<typeof Btw> = (ctx) => {
+     id: "main",
+     region: "side",
+     transient: true,
++    mobile: { title: ctx.t("mobile.title"), order: 35, kind: "menu", icon: "comment" },
+     // Layouts saved before extensions store the tab as "btw"; as a panel key it leaves like any unlisted transient tab.
+     legacy: { btw: "main" },
+     // One tab per stored question. Until the session's store loads, its tabs stay listed but hidden so restore keeps
+@@ -86,11 +86,15 @@ const setup: Setup<typeof Btw> = (ctx) => {
+         return [tab]
+       })
+     },
+-    render: (props) => (
+-      <Suspense>
+-        <SessionBtwPanel btw={btw} session={props.session} id={props.tab.id} />
+-      </Suspense>
+-    ),
++    render: (props) => {
++      const panel = usePanel()
++
++      return (
++        <Suspense>
++          <SessionBtwPanel btw={btw} session={props.session} id={props.tab.id} mobile={panel.placement() === "mobile"} />
++        </Suspense>
++      )
++    },
+     close: (input) => {
+       btw.remove(input.session, input.tab.id)
+       tabs.get(input.session.key)?.delete(input.tab.id)

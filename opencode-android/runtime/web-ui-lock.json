@@ -1,0 +1,11 @@
+{
+  "source_archive": "vendor/opencode-v2.1.4-source.tar.gz",
+  "source_archive_sha256": "fd236cf0fe39895dc6cece68a481aa7f9d4e765af012b6e54f3adc89afa8f53c",
+  "opencode_version": "2.1.4",
+  "opencode_commit": "4b83402a293c3d018216bbf75815175e32f3a16c",
+  "bun_version": "1.4.4",
+  "channel": "prod",
+  "android_host": true,
+  "ui_source_path": "packages/app",
+  "manifest": "app/src/main/assets/web-ui/manifest.json"
+}

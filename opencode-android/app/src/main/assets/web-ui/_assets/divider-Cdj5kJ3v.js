@@ -1,0 +1,2 @@
+import{_ as e,b as t,et as n,q as r}from"./store-CKe_GNKE.js";var i=t(`<div>`);function a(t){let[a,o]=n(t,[`class`,`classList`]);return(()=>{var t=i();return e(t,r(o,{role:`separator`,"aria-orientation":`horizontal`,"data-component":`divider-v2`,get classList(){return{...a.classList,[a.class??``]:!!a.class}}}),!1,!1),t})()}export{a as t};
+//# sourceMappingURL=divider-Cdj5kJ3v.js.map

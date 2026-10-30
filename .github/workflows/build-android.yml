@@ -1,0 +1,46 @@
+name: Build OpenCode Voice Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'opencode-android/**'
+      - '.github/workflows/build-android.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: opencode-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install required SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865'
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 dpkg-dev unzip zip
+      - name: Build signed debug APK
+        run: |
+          chmod +x gradlew scripts/build.sh
+          bash scripts/build.sh
+      - name: List generated APKs
+        if: always()
+        run: find app/build/outputs/apk -name '*.apk' -type f -print || true
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenCode-Voice-Android-APK
+          path: opencode-android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

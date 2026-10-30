@@ -1,0 +1,33 @@
+# opencode-bionic — quilt-style fork. The upstream tree is never checked in;
+# it's fetched by termux/ci/fetch-upstream.sh into an out-of-tree build dir.
+# Anything created by a local build attempt should be ignored here.
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+.zed/
+*~
+Session.vim
+
+# Ephemeral build state
+node_modules/
+dist/
+ts-dist/
+.turbo/
+tsconfig.tsbuildinfo
+*.bun-build
+tmp/
+logs/
+a.out
+
+# Secrets / local env
+.env
+.env.local
+
+# Test artifacts
+core
+
+# Random build cache dirs we occasionally see
+.scripts/
+.direnv/

@@ -1,0 +1,2 @@
+import{P as e,et as t,q as n}from"./store-CKe_GNKE.js";import{t as r}from"./UKTBL2JL-CCdnrJfz.js";function i(i){let[a,o]=t(i,[`variant`,`size`,`icon`,`class`,`classList`,`state`]);return e(r,n(o,{"data-component":`icon-button-v2`,get"data-size"(){return a.size||`normal`},get"data-variant"(){return a.variant||`neutral`},get"data-state"(){return a.state},get classList(){return{...a.classList,[a.class??``]:!!a.class}},get children(){return a.icon}}))}export{i as t};
+//# sourceMappingURL=icon-button-O7O-wj_W.js.map

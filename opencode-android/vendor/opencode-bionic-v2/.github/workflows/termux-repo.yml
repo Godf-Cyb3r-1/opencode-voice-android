@@ -1,0 +1,164 @@
+name: termux-repo
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * 1"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: termux-repo
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Install apt repo tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-utils gnupg
+
+      - name: Import signing key
+        env:
+          APT_KEY: ${{ secrets.APT_GPG_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$APT_KEY" | gpg --batch --import
+          gpg --list-secret-keys
+
+      - name: Stage release pool (latest per channel)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          rm -rf pool && mkdir -p pool/stable pool/beta pool/dev
+          gh api "repos/$REPO/releases?per_page=100" --paginate > releases.json
+          latest() { jq -r "$1" releases.json | head -1; }
+          STABLE_TAG="$(latest '[.[] | select(.draft==false and .prerelease==false and (.tag_name|test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | .[0].tag_name')"
+          BETA_TAG="$(latest '[.[] | select(.draft==false and .prerelease==true and (.tag_name|contains("-beta.")))] | .[0].tag_name')"
+          DEV_TAG="$(latest '[.[] | select(.draft==false and .prerelease==true and (.tag_name|contains("-dev.")))] | .[0].tag_name')"
+          echo "stable=$STABLE_TAG beta=$BETA_TAG dev=$DEV_TAG"
+          dl() {
+            if [ -z "$1" ] || [ "$1" = "null" ]; then echo "skip $2: no release found"; return 0; fi
+            gh release download "$1" -R "$REPO" -p '*.deb' -D "pool/$2/" --clobber
+          }
+          dl "$STABLE_TAG" stable
+          dl "$BETA_TAG" beta
+          dl "$DEV_TAG" dev
+          find pool -type f | sort
+
+      - name: Build signed apt tree + channel index
+        run: |
+          set -euo pipefail
+          rm -rf repo && mkdir -p repo
+          cp -r pool repo/pool
+          gpg --armor --export > repo/opencode-bionic.asc
+          gpg --armor --export | gpg --dearmor > repo/opencode-bionic.gpg
+          for ch in stable beta dev; do
+            D=repo/dists/$ch
+            if [ -z "$(ls -A pool/$ch 2>/dev/null)" ]; then echo "channel $ch: no packages, skipping suite"; continue; fi
+            mkdir -p "$D/main/binary-aarch64"
+            apt-ftparchive packages "pool/$ch" > "$D/main/binary-aarch64/Packages"
+            gzip -k -9 "$D/main/binary-aarch64/Packages"
+            apt-ftparchive \
+              -o "APT::FTPArchive::Release::Origin=opencode-bionic" \
+              -o "APT::FTPArchive::Release::Label=opencode-bionic" \
+              -o "APT::FTPArchive::Release::Suite=$ch" \
+              -o "APT::FTPArchive::Release::Codename=$ch" \
+              -o "APT::FTPArchive::Release::Architectures=aarch64" \
+              -o "APT::FTPArchive::Release::Components=main" \
+              -o "APT::FTPArchive::Release::Description=OpenCode for Termux (Bionic aarch64), channel $ch" \
+              release "$D" > "$D/Release"
+            gpg --batch --yes --clearsign --output "$D/InRelease" "$D/Release"
+            gpg --batch --yes --armor --detach-sign --output "$D/Release.gpg" "$D/Release"
+          done
+          python3 - <<'PY'
+          import glob, html, os, time
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          SUITES = [
+              ("stable", "Default line. Mirrors upstream release tags."),
+              ("beta", "Upstream beta branch, first build per version."),
+              ("dev", "Upstream dev branch, first build per version."),
+          ]
+          rows = []
+          for ch, blurb in SUITES:
+              debs = glob.glob("pool/%s/*.deb" % ch)
+              if not debs:
+                  continue
+              ver = os.path.basename(debs[0]).split("_")[1]
+              rows.append((ch, ver))
+          now = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+          base_url = "https://bd-loser.github.io/opencode-bionic"
+          setup_base = "https://raw.githubusercontent.com/%s/main/repo-setup.sh" % REPO
+          cards = []
+          for ch, ver in rows:
+              setup = "curl -fsSL %s | bash" % setup_base
+              if ch != "stable":
+                  setup = "curl -fsSL %s | OPENCODE_CHANNEL=%s bash" % (setup_base, ch)
+              tag = "v" + ver
+              rel = "https://github.com/%s/releases/tag/%s" % (REPO, tag)
+              cards.append(
+                  '<div class="card"><div class="head"><span class="ch %s">%s</span>'
+                  '<span class="ver">opencode %s</span></div>'
+                  '<p class="blurb">%s</p>'
+                  "<pre><code>%s</code></pre>"
+                  '<p class="alt">apt line: <code>deb [arch=aarch64] %s %s main</code> &middot; '
+                  '<a href="%s">release %s</a></p></div>'
+                  % (ch, ch, html.escape(ver), html.escape(blurb), html.escape(setup),
+                     base_url, ch, rel, html.escape(tag))
+              )
+          bg = '"'.join(["", ""]) or ""
+          page = "".join([
+              '<!doctype html><html lang="en"><head><meta charset="utf-8">',
+              '<meta name="viewport" content="width=device-width,initial-scale=1">',
+              "<title>opencode for Termux - package repository</title>",
+              "<style>",
+              "body{background:#0d1117;color:#d8dee6;font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:2rem 1rem;line-height:1.5}",
+              "a{color:#6ea8fe}",
+              "code{background:#161b22;border:1px solid #2b3240;border-radius:6px;padding:.1rem .35rem;font-size:.85em;word-break:break-all}",
+              "pre code{display:block;padding:.8rem;overflow-x:auto}",
+              ".card{border:1px solid #2b3240;border-radius:12px;padding:1rem 1.2rem;margin:1rem 0;background:#0f141b}",
+              ".head{display:flex;gap:.7rem;align-items:center;margin-bottom:.3rem}",
+              ".ch{font-weight:700;padding:.15rem .6rem;border-radius:99px;font-size:.8rem}",
+              ".ch.stable{background:#1a3d2a;color:#5ad19c}.ch.beta{background:#41351a;color:#e6c05a}.ch.dev{background:#152a44;color:#6ea8fe}",
+              ".ver{font-weight:600}p{margin:.4rem 0}.blurb{color:#aeb7c4;font-size:.92rem}",
+              ".alt{color:#9aa4b2;font-size:.85rem}.alt code{font-size:.95em}",
+              "footer{margin-top:2rem;color:#8a94a3;font-size:.85rem}",
+              "</style></head><body>",
+              "<h1>opencode for Termux</h1>",
+              '<p>Signed apt repository for <a href="https://github.com/%s">%s</a> &#8212; '
+              "native Bionic builds of <a href=\"https://opencode.ai\">opencode</a>. "
+              "Add a channel, then <code>pkg upgrade opencode</code> keeps it current.</p>"
+              % (REPO, REPO),
+              "".join(cards),
+              "<footer>Regenerated and re-signed automatically after every release &#183; %s UTC<br>"
+              'Key: <a href="opencode-bionic.gpg">opencode-bionic.gpg</a> &#183; '
+              '<a href="opencode-bionic.asc">.asc</a> &#183; '
+              'full docs in the <a href="https://github.com/%s#readme">repo README</a></footer>'
+              % (html.escape(now), REPO),
+              "</body></html>",
+          ])
+          open("repo/index.html", "w").write(page)
+          print("index.html: %d channel card(s)" % len(rows))
+          PY
+          find repo -type f | sort
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
