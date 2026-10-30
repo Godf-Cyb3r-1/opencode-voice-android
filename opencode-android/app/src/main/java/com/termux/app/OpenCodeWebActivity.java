@@ -244,8 +244,6 @@ public final class OpenCodeWebActivity extends Activity {
                         catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
                         break;
                 }
-                        break;
-                }
             }).setNegativeButton("Close", null).show();
     }
 
