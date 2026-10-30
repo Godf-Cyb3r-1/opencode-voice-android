@@ -111,7 +111,12 @@ final class JarvisStreamingStt {
             if (current.isEmpty()) return;
             if (current.equals(live)) return; // Identical updates must not postpone the turn forever.
             live = current;
-            generation++;
+            final int ticket = ++generation;
+            // A new phrase may start before a completed line is dispatched.
+            // Re-arm its pending finalization instead of cancelling forever.
+            if (!pending.isEmpty()) {
+                main.postDelayed(() -> finish(ticket), CONTINUATION_MS);
+            }
             events.onPartial(join(pending, current));
             events.onState("hearing");
         });
