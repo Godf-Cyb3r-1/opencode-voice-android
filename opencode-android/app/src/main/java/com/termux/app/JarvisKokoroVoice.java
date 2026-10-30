@@ -150,7 +150,7 @@ final class JarvisKokoroVoice {
                     cfg.setSid(speaker);
                     cfg.setSpeed(speed);
                     cfg.setSilenceScale(.22f);
-                    GeneratedAudio audio=model.generateWithConfig(phrase,cfg);
+                    GeneratedAudio audio=model.generateWithConfigAndCallback(phrase,cfg,samples -> 1);
                     float[] samples=audio.getSamples();
                     int sampleRate=audio.getSampleRate();
                     if (samples==null || samples.length==0) throw new IllegalStateException("Kokoro produced empty audio");
