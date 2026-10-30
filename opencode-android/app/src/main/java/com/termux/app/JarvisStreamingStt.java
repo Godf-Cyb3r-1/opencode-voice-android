@@ -113,7 +113,7 @@ final class JarvisStreamingStt {
         OnlineRecognizerConfig config=OnlineRecognizerConfig.builder()
             .setOnlineModelConfig(model)
             .setDecodingMethod("greedy_search")
-            .setEnableEndpoint(false)
+            .setEnableEndpoint(true)
             .build();
         recognizer=new OnlineRecognizer(config);
         stream=recognizer.createStream();
@@ -138,6 +138,8 @@ final class JarvisStreamingStt {
             long lastSpeech=0L;
             long startedUtterance=0L;
             long lastPartialUpdate=0L;
+            long lastTextChange=0L;
+            long lastFrameDebug=0L;
             int stable=0;
             boolean hasSpeech=false;
             boolean wasPaused=false;
@@ -151,7 +153,7 @@ final class JarvisStreamingStt {
                 if(pausedForResponse) {
                     if(!wasPaused) {
                         recognizer.reset(stream);
-                        hasSpeech=false;activeFrames=0;stable=0;
+                        hasSpeech=false;activeFrames=0;stable=0;lastTextChange=0L;
                         lastPartial="";lastStable="";
                     }
                     wasPaused=true;
@@ -186,6 +188,7 @@ final class JarvisStreamingStt {
                     lastStable=lastPartial;
                     lastPartial=partial;
                     if (!partial.isEmpty()) {
+                        lastTextChange=now;
                         // New decoded words override quiet microphone RMS.
                         hasSpeech=true;
                         if (startedUtterance==0L) startedUtterance=now;
@@ -197,18 +200,34 @@ final class JarvisStreamingStt {
                         lastPartialUpdate=now;
                     }
                 }else if(!partial.isEmpty())stable++;
-                if(!hasSpeech || partial.isEmpty())continue;
-                long silence=now-lastSpeech;
-                boolean unfinished=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                long threshold=unfinished?2400:partial.endsWith("?")||partial.endsWith(".")?850:1350;
-                // No hard recording duration limit. Long pauses while mid-thought
-                // are tolerated, and VAD alone never forces an OpenCode action.
+                if(!hasSpeech || partial.isEmpty()) {
+                    // An endpoint can be signalled without a viable transcript.
+                    // Recycle the acoustic state rather than staying in HEARING.
+                    if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
+                        recognizer.reset(stream);
+                        activeFrames=0;hasSpeech=false;startedUtterance=0L;
+                        emitState("listening");
+                    }
+                    continue;
+                }
+                long quiet=now-lastSpeech;
+                long textIdle=lastTextChange==0L?0L:now-lastTextChange;
+                boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
                 boolean meaningful=partial.split("\\s+").length>=2;
-                if(meaningful && silence>=threshold && stable>=3 && now-startedUtterance>=500) {
+                boolean nativeEndpoint=recognizer.isEndpoint(stream);
+                // Stop waiting forever when microphone noise keeps the crude
+                // energy detector active. Require stable recognized text too.
+                long quietLimit=incomplete?2800:1400;
+                long stuckLimit=incomplete?5500:2500;
+                boolean endOfTurn=meaningful && stable>=3 &&
+                    (nativeEndpoint && textIdle>=350 ||
+                     quiet>=quietLimit && textIdle>=650 ||
+                     textIdle>=stuckLimit);
+                if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
                     pausedForResponse=true;
                     recognizer.reset(stream);
-                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastPartial="";
+                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
                     emitState("thinking");
                     ui.post(()->events.onFinal(utterance));
                 }
