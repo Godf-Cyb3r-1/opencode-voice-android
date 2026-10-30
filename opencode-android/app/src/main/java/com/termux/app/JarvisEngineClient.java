@@ -21,6 +21,7 @@ final class JarvisEngineClient {
     interface Callback {
         void onStage(String stage);
         void onResult(String response);
+        void onPartial(String safeSentence);
         void onError(String diagnostic);
     }
     private final Context context;
@@ -59,6 +60,9 @@ final class JarvisEngineClient {
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
                 String latest = "";
                 int stable = 0;
+                String lastCandidate = "";
+                int candidateStable = 0;
+                boolean deliveredEarly = false;
                 while (android.os.SystemClock.elapsedRealtime() < deadline) {
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                     Thread.sleep(1400);
@@ -68,6 +72,21 @@ final class JarvisEngineClient {
                     String text = latestAssistant(messages);
                     if (!text.isEmpty() && text.equals(latest)) stable++; else stable = 0;
                     latest = text;
+                    // Speak one confirmed, complete sentence before the rest of
+                    // the model/tool workflow finishes, without repeating it.
+                    if (!deliveredEarly && text.length() > 30 && !text.equals(previousAnswer)) {
+                        int boundary = firstSentenceBoundary(text);
+                        if (boundary > 22 && boundary < 220) {
+                            String candidate = text.substring(0, boundary).trim();
+                            candidateStable = candidate.equals(lastCandidate) ? candidateStable + 1 : 0;
+                            lastCandidate = candidate;
+                            if (candidateStable >= 1) {
+                                deliveredEarly = true;
+                                String first = candidate;
+                                ui.post(() -> callback.onPartial(first));
+                            }
+                        }
+                    }
                     boolean active = isSessionActive();
                     if (!active && !latest.isEmpty() && !latest.equals(previousAnswer) && stable >= 1) {
                         String finished = latest;
@@ -81,6 +100,15 @@ final class JarvisEngineClient {
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
+    }
+
+    private static int firstSentenceBoundary(String s) {
+        for (int i=20; i<s.length()-1 && i<215; i++) {
+            char c=s.charAt(i);
+            if ((c=='.' || c=='!' || c=='?') && Character.isWhitespace(s.charAt(i+1)))
+                return i+1;
+        }
+        return -1;
     }
 
     private void stage(Callback callback, String stage) {
