@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -36,21 +36,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3 dpkg-dev unzip zip
-      - name: Prepare real offline Supertonic neural model
+      - name: Prepare real offline Pocket TTS neural model
         run: |
-          chmod +x scripts/prepare_supertonic.sh
-          bash scripts/prepare_supertonic.sh
-          test -s app/src/main/assets/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/text_encoder.int8.onnx
-          test -s app/src/main/assets/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/voice.bin
-          test -s app/src/main/assets/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/tts.json
-          test -s app/src/main/assets/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/vocoder.int8.onnx
+          chmod +x scripts/prepare_pocket.sh
+          bash scripts/prepare_pocket.sh
+          test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/lm_main.int8.onnx
+          test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/test_wavs/bria.wav
+          test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/vocab.json
+          test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/decoder.int8.onnx
       - name: Build signed debug APK
         run: |
           chmod +x gradlew scripts/build.sh
           bash scripts/build.sh
           for apk in app/build/outputs/apk/debug/*.apk; do
-            unzip -Z -1 "$apk" | grep -F "assets/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/text_encoder.int8.onnx" >/dev/null || { echo "Supertonic model missing from $apk"; exit 1; }
-            echo "Verified Supertonic weights packaged in $apk"
+            unzip -Z -1 "$apk" | grep -F "assets/sherpa-onnx-pocket-tts-int8-2026-01-26/lm_main.int8.onnx" >/dev/null || { echo "Pocket TTS model missing from $apk"; exit 1; }
+            echo "Verified Pocket TTS weights packaged in $apk"
           done
       - name: List generated APKs
         if: always()
@@ -58,7 +58,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Supertonic-Offline-Android-APK
+          name: Jarvis-Pocket TTS-Offline-Android-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
