@@ -149,6 +149,14 @@ final class JarvisDashboard extends FrameLayout {
         speakButton.setText(listening || "thinking".equals(s) || "transcribing".equals(s) ? "END VOICE SESSION" : "ENGAGE ASSISTANT");
     }
 
+    void showLiveTranscript(String transcript) {
+        subtitle.setText("HEARING  •  " + transcript);
+    }
+
+    void clearLiveTranscript() {
+        subtitle.setText("ADAPTIVE PERSONAL OPERATIONS SYSTEM");
+    }
+
     void addEvent(String message) {
         String old = activity.getText().toString();
         if (old.length() > 1200) old = old.substring(old.length() - 1200);

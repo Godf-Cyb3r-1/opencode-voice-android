@@ -69,6 +69,13 @@ public final class OpenCodeWebActivity extends Activity {
     private static final int PICK_FILE = 4120;
     private static final int VOICE_REQUEST = 4121;
     private TextToSpeech speech;
+    private JarvisPocketVoice pocket;
+    private boolean preferPocket = true;
+    private boolean pocketFailed;
+    private String pendingNeuralText;
+    private String pendingNeuralId;
+    private String currentNeuralText;
+    private String currentNeuralId;
     private volatile boolean ttsReady;
     private String pendingSpeakText;
     private String pendingSpeakId;
@@ -181,6 +188,26 @@ public final class OpenCodeWebActivity extends Activity {
             : new TextToSpeech(this, init, requestedVoiceEngine);
     }
 
+    private void speakAssistant(String text, String id) {
+        String spoken = JarvisSpeechStyle.prepare(text);
+        if (spoken.isEmpty()) return;
+        if (preferPocket && pocket != null && !pocketFailed) {
+            if (pocket.isReady()) {
+                currentNeuralText=spoken;
+                currentNeuralId=id;
+                pocket.speak(spoken,id);
+            } else {
+                pendingNeuralText=spoken;
+                pendingNeuralId=id;
+                if (dashboard != null)
+                    dashboard.addEvent("POCKET TTS  •  Loading neural model. Speech is queued, not replaced with Android TTS.");
+            }
+            return;
+        }
+        if (dashboard != null) dashboard.addEvent("VOICE FALLBACK  •  Android TTS is active.");
+        speakJarvis(spoken,id);
+    }
+
     private void speakJarvis(String text, String id) {
         if (text == null || text.trim().isEmpty()) return;
         if (speech == null || !ttsReady) {
@@ -199,24 +226,58 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     private void showVoiceSettings() {
-        final String[] options = {"Select local / system TTS engine", "Select installed voice",
-            "Speech speed", "Voice pitch", "Preview Jarvis voice", "Android TTS settings"};
+        final String[] options = {
+            "Primary speech engine: " + (preferPocket ? "Pocket TTS INT8 (native offline)" : "Android TTS"),
+            "Choose reference WAV (voice cloning)",
+            "Pocket TTS speaking speed",
+            "Preview Jarvis voice",
+            "Android fallback TTS engine",
+            "Android fallback voice",
+            "Android TTS settings"
+        };
         new AlertDialog.Builder(this).setTitle("Jarvis • Voice Studio")
             .setItems(options, (dialog, choice) -> {
                 switch (choice) {
-                    case 0: chooseTtsEngine(); break;
-                    case 1: chooseInstalledVoice(); break;
-                    case 2: chooseVoiceValue("jarvis_voice_rate", "Speech speed", 0.6f, 1.5f); break;
-                    case 3: chooseVoiceValue("jarvis_voice_pitch", "Voice pitch", 0.7f, 1.3f); break;
-                    case 4: speakJarvis("Jarvis online. Your personal assistant is ready.", "jarvis-preview"); break;
-                    case 5:
+                    case 0:
+                        preferPocket = !preferPocket;
+                        OpenCodeWebService.preferences(this).edit()
+                            .putBoolean("jarvis_prefer_pocket", preferPocket).apply();
+                        if (dashboard != null) dashboard.addEvent("VOICE PATH  •  " +
+                            (preferPocket ? "Pocket TTS native neural" : "Android system TTS"));
+                        break;
+                    case 1: choosePocketReference(); break;
+                    case 2: choosePocketSpeed(); break;
+                    case 3: speakAssistant("Good evening. Jarvis is online, and your assistant is ready.", "jarvis-preview"); break;
+                    case 4: chooseTtsEngine(); break;
+                    case 5: chooseInstalledVoice(); break;
+                    case 6:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
-                        catch (Exception unavailable) {
-                            startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));
-                        }
+                        catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
                         break;
                 }
             }).setNegativeButton("Close", null).show();
+    }
+
+    private static final int PICK_REFERENCE_AUDIO = 4196;
+    private void choosePocketReference() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.setType("audio/*");
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(pick, PICK_REFERENCE_AUDIO);
+    }
+
+    private void choosePocketSpeed() {
+        android.widget.SeekBar speedControl = new android.widget.SeekBar(this);
+        speedControl.setMax(45);
+        float current = OpenCodeWebService.preferences(this).getFloat("jarvis_pocket_speed", 1.05f);
+        speedControl.setProgress(Math.max(0,Math.min(45,Math.round((current-.75f)*100f))));
+        new AlertDialog.Builder(this).setTitle("Pocket TTS delivery speed")
+            .setView(speedControl).setPositiveButton("Apply", (dialog,which) -> {
+                float speed=.75f+speedControl.getProgress()/100f;
+                OpenCodeWebService.preferences(this).edit().putFloat("jarvis_pocket_speed",speed).apply();
+                if(pocket!=null)pocket.setSpeed(speed);
+                speakAssistant("Speech pacing adjusted. How does that sound?", "jarvis-preview");
+            }).setNegativeButton("Cancel",null).show();
     }
 
     private void chooseTtsEngine() {
@@ -309,7 +370,7 @@ public final class OpenCodeWebActivity extends Activity {
                                 if (speech != null) {
                                     jarvisNarrating = jarvisAnswerPending;
                                     jarvisAnswerPending = false;
-                                    speakJarvis(message, "oc-auto");
+                                    speakAssistant(message, "oc-auto");
                                 }
                             } else pendingNarration = message;
                         }
@@ -372,7 +433,46 @@ public final class OpenCodeWebActivity extends Activity {
         status.setTextColor(Color.rgb(160, 160, 160));
         status.setTextSize(11);
         toolbar.addView(status);
+        preferPocket = OpenCodeWebService.preferences(this).getBoolean("jarvis_prefer_pocket", true);
         initializeTts(OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", ""));
+        pocket = new JarvisPocketVoice(this, new JarvisPocketVoice.Events() {
+            @Override public void ready() {
+                if (dashboard != null) dashboard.addEvent("POCKET TTS INT8  •  Reference voice ready (offline).");
+                if (pendingNeuralText != null) {
+                    String text=pendingNeuralText, id=pendingNeuralId;
+                    pendingNeuralText=null; pendingNeuralId=null;
+                    speakAssistant(text,id);
+                }
+            }
+            @Override public void started(String id) {
+                if (dashboard != null) dashboard.setState("speaking");
+            }
+            @Override public void completed(String id) {
+                currentNeuralText=null;currentNeuralId=null;
+                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+            }
+            @Override public void failed(String id, String reason) {
+                if (dashboard != null) dashboard.addEvent("POCKET TTS ERROR  •  " + reason);
+                if ("initialization".equals(id)) {
+                    pocketFailed=true;
+                    if (dashboard != null) dashboard.addEvent("VOICE  •  Pocket TTS unavailable; switching to Android TTS.");
+                    if (pendingNeuralText != null) {
+                        String text=pendingNeuralText, uid=pendingNeuralId;
+                        pendingNeuralText=null; pendingNeuralId=null;
+                        speakJarvis(text,uid);
+                    }
+                } else {
+                    if (dashboard != null) dashboard.addEvent("VOICE FALLBACK  •  Neural synthesis failed; using Android TTS for this utterance.");
+                    if (currentNeuralText != null && id.equals(currentNeuralId)) {
+                        String text=currentNeuralText;
+                        currentNeuralText=null;currentNeuralId=null;
+                        speakJarvis(text,id);
+                    }
+                }
+            }
+        });
+
+        pocket.setSpeed(OpenCodeWebService.preferences(this).getFloat("jarvis_pocket_speed", 1.05f));
         engineClient = new JarvisEngineClient(this);
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
             @Override public void onTranscript(String transcript) {
@@ -393,9 +493,9 @@ public final class OpenCodeWebActivity extends Activity {
                         @Override public void onResult(String response) {
                             jarvisAnswerPending = false;
                             if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
-                            if (speech != null && jarvis != null && jarvis.isActive()) {
+                            if (jarvis != null && jarvis.isActive()) {
                                 dashboard.setState("speaking");
-                                speakJarvis(response, "jarvis-native");
+                                speakAssistant(response, "jarvis-native");
                             } else if (jarvis != null) jarvis.onAnswerSpoken();
                         }
                         @Override public void onError(String diagnostic) {
@@ -409,7 +509,13 @@ public final class OpenCodeWebActivity extends Activity {
                     });
                 }
             }
-            @Override public void onState(String state) { updateJarvisLabel(state); }
+            @Override public void onPartial(String partial) {
+                if (dashboard != null) dashboard.showLiveTranscript(partial);
+            }
+            @Override public void onState(String state) {
+                updateJarvisLabel(state);
+                if (dashboard != null && !"hearing".equals(state)) dashboard.clearLiveTranscript();
+            }
         });
         jarvisButton = new Button(this);
         jarvisButton.setText("◎");
@@ -418,6 +524,7 @@ public final class OpenCodeWebActivity extends Activity {
         jarvisButton.setBackgroundColor(Color.TRANSPARENT);
         jarvisButton.setOnClickListener(v -> {
             if (speech != null) speech.stop();
+            if (pocket != null) pocket.stop();
             jarvis.toggle();
             autoNarrate = false;
             handler.removeCallbacks(narrationPoll);
@@ -555,6 +662,8 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void openSettings() { showVoiceSettings(); }
             @Override public void stopSpeaking() {
                 if (speech != null) speech.stop();
+                if (pocket != null) pocket.stop();
+                if (dashboard != null) dashboard.setState("standby");
                 if (jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
             }
         });
@@ -566,7 +675,7 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void onSpeak(String result) {
                 if (speech != null) {
                     dashboard.setState("speaking");
-                    speakJarvis(result, "jarvis-native");
+                    speakAssistant(result, "jarvis-native");
                 } else if (jarvis != null) jarvis.onAnswerSpoken();
             }
         });
@@ -880,7 +989,64 @@ public final class OpenCodeWebActivity extends Activity {
         return "application/octet-stream";
     }
 
+    private void importPocketReference(Uri uri) {
+        if (uri == null) return;
+        if (dashboard != null) dashboard.addEvent("REFERENCE VOICE  •  Importing audio...");
+        requests.execute(() -> {
+            java.io.File target = new java.io.File(getFilesDir(), "jarvis-reference.wav");
+            java.io.File temp = new java.io.File(getFilesDir(), "jarvis-reference.wav.partial");
+            try {
+                long total = 0;
+                try (InputStream source = getContentResolver().openInputStream(uri);
+                     java.io.FileOutputStream sink = new java.io.FileOutputStream(temp)) {
+                    if (source == null) throw new IllegalArgumentException("Unable to open audio");
+                    byte[] chunk = new byte[16384];
+                    int count;
+                    while ((count = source.read(chunk)) != -1) {
+                        total += count;
+                        if (total > 20 * 1024 * 1024)
+                            throw new IllegalArgumentException("Audio exceeds 20 MB");
+                        sink.write(chunk, 0, count);
+                    }
+                }
+                if (total < 1000) throw new IllegalArgumentException("Reference recording too short");
+                try (java.io.FileInputStream input = new java.io.FileInputStream(temp)) {
+                    byte[] header = new byte[12];
+                    if (input.read(header) != 12 ||
+                        header[0] != 'R' || header[1] != 'I' ||
+                        header[2] != 'F' || header[3] != 'F' ||
+                        header[8] != 'W' || header[9] != 'A' ||
+                        header[10] != 'V' || header[11] != 'E')
+                        throw new IllegalArgumentException("Select a PCM WAV recording, not MP3/M4A");
+                }
+                // Parse/validate with the same decoder as synthesis.
+                com.k2fsa.sherpa.onnx.WaveReader wave = new com.k2fsa.sherpa.onnx.WaveReader(temp.getAbsolutePath());
+                if (wave.getSamples() == null || wave.getSamples().length < wave.getSampleRate() * 2)
+                    throw new IllegalArgumentException("Use at least two seconds of clear speech");
+                if (target.exists() && !target.delete()) throw new IllegalStateException("Cannot replace reference");
+                if (!temp.renameTo(target)) throw new IllegalStateException("Cannot save reference audio");
+                getSharedPreferences("jarvis_pocket", MODE_PRIVATE).edit()
+                    .putString("reference", target.getAbsolutePath()).apply();
+                handler.post(() -> {
+                    if (pocket != null) pocket.setReferenceFile(target.getAbsolutePath());
+                    if (dashboard != null) dashboard.addEvent("REFERENCE VOICE  •  Installed locally. Testing clone.");
+                    speakAssistant("Voice profile installed. I'm ready to assist you.", "jarvis-preview");
+                });
+            } catch (Throwable failure) {
+                temp.delete();
+                String reason = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+                handler.post(() -> {
+                    if (dashboard != null) dashboard.addEvent("REFERENCE ERROR  •  " + reason);
+                });
+            }
+        });
+    }
+
     @Override protected void onActivityResult(int request, int result, Intent data) {
+        if (request == PICK_REFERENCE_AUDIO) {
+            if (result == RESULT_OK && data != null) importPocketReference(data.getData());
+            return;
+        }
         if (request == VOICE_REQUEST) {
             if (result == RESULT_OK && data != null) {
                 ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
@@ -1000,6 +1166,7 @@ public final class OpenCodeWebActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
         if (engineClient != null) engineClient.close();
+        if (pocket != null) pocket.close();
         if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (!rendererGone) web.destroy();

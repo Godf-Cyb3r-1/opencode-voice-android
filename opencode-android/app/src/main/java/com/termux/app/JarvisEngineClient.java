@@ -51,14 +51,17 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text", instruction);
+                JSONObject prompt = new JSONObject().put("text",
+                    JarvisSpeechStyle.instruction()
+                    + "\n\nTask: " + instruction
+                    + "\\n\\nAfter attempting actions, give one concise spoken status update.");
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
                 String latest = "";
                 int stable = 0;
                 while (android.os.SystemClock.elapsedRealtime() < deadline) {
                     if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-                    Thread.sleep(1400);
+                    Thread.sleep(450);
                     JSONObject messages = http("GET",
                         "/api/session/" + Uri.encode(sessionId) + "/message?type=assistant&order=desc&limit=5",
                         null, 8000);
@@ -66,7 +69,7 @@ final class JarvisEngineClient {
                     if (!text.isEmpty() && text.equals(latest)) stable++; else stable = 0;
                     latest = text;
                     boolean active = isSessionActive();
-                    if (!active && !latest.isEmpty() && !latest.equals(previousAnswer) && stable >= 1) {
+                    if (!active && !latest.isEmpty() && !latest.equals(previousAnswer) && stable >= 0) {
                         String finished = latest;
                         ui.post(() -> callback.onResult(finished));
                         return;
@@ -94,36 +97,51 @@ final class JarvisEngineClient {
         return data == null ? response : data;
     }
 
+    /**
+     * Only completed, user-facing assistant text may reach speech.
+     * OpenCode 2 stores reasoning and tool activity alongside text inside
+     * assistant.content. Checking for the mere presence of 'text' is UNSAFE:
+     * reasoning parts also contain text, and were previously spoken aloud.
+     */
     private String latestAssistant(JSONObject response) {
-        JSONArray arr = response.optJSONArray("data");
-        if (arr == null) {
+        JSONArray messages = response.optJSONArray("data");
+        if (messages == null) {
             JSONObject data = response.optJSONObject("data");
-            if (data != null) arr = data.optJSONArray("items");
+            if (data != null) {
+                messages = data.optJSONArray("items");
+                if (messages == null) messages = data.optJSONArray("messages");
+            }
         }
-        if (arr == null) arr = response.optJSONArray("items");
-        if (arr == null) arr = response.optJSONArray("messages");
-        if (arr == null) return "";
-        for (int i=0;i<arr.length();i++) {
-            JSONObject msg = arr.optJSONObject(i);
-            if (msg == null) continue;
-            JSONObject info = msg.optJSONObject("info");
-            if (info == null) info = msg;
+        if (messages == null) messages = response.optJSONArray("items");
+        if (messages == null) messages = response.optJSONArray("messages");
+        if (messages == null) return "";
+
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject envelope = messages.optJSONObject(i);
+            if (envelope == null) continue;
+            JSONObject info = envelope.optJSONObject("info");
+            if (info == null) info = envelope;
             String role = info.optString("role", info.optString("type", ""));
-            if (!role.equals("assistant")) continue;
-            String direct = msg.optString("text", "");
-            if (!direct.isEmpty()) return direct;
-            JSONArray parts = msg.optJSONArray("parts");
-            if (parts == null) parts = msg.optJSONArray("content");
-            if (parts == null) continue;
-            StringBuilder out = new StringBuilder();
-            for(int j=0;j<parts.length();j++) {
-                JSONObject part = parts.optJSONObject(j);
-                if(part != null && ("text".equals(part.optString("type")) || part.has("text"))) {
-                    if(out.length()>0)out.append(' ');
-                    out.append(part.optString("text",""));
+            if (!"assistant".equals(role)) continue;
+
+            // Never narrate tool call results or model reasoning. Only text
+            // segments of the newest assistant message are eligible.
+            JSONArray content = envelope.optJSONArray("content");
+            if (content == null) content = info.optJSONArray("content");
+            if (content == null) content = envelope.optJSONArray("parts");
+            if (content == null) return "";
+
+            StringBuilder spoken = new StringBuilder();
+            for (int j = 0; j < content.length(); j++) {
+                JSONObject part = content.optJSONObject(j);
+                if (part == null || !"text".equals(part.optString("type"))) continue;
+                String t = part.optString("text", "").trim();
+                if (!t.isEmpty()) {
+                    if (spoken.length() > 0) spoken.append(' ');
+                    spoken.append(t);
                 }
             }
-            if(out.length()>0)return out.toString();
+            return JarvisSpeechStyle.prepare(spoken.toString());
         }
         return "";
     }
