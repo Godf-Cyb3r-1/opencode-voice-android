@@ -90,20 +90,16 @@ final class JarvisStreamingStt {
         pending = "";
         live = "";
         generation++;
+        started = true;
         events.onState("listening");
         worker.execute(() -> {
             try {
                 mic.start();
-                main.post(() -> {
-                    if (closing || waiting) {
-                        worker.execute(() -> {try {mic.stop();} catch (Throwable ignored) {}});
-                    } else {
-                        started = true;
-                        events.onState("listening");
-                    }
-                });
             } catch (Throwable error) {
-                main.post(() -> onError("Moonshine microphone error: " + error.getMessage()));
+                main.post(() -> {
+                    started = false;
+                    onError("Moonshine microphone error: " + error.getMessage());
+                });
             }
         });
     }
@@ -150,9 +146,10 @@ final class JarvisStreamingStt {
         waiting = true;
         started = false;
         events.onState("thinking");
-        worker.execute(() -> {
-            try {if(mic != null) mic.stop();}catch(Throwable ignored){}
-        });
+        // stop() must not be enqueued behind a possibly blocking start()
+        // on our single worker thread. The official Android example stops
+        // microphone capture directly from its UI thread.
+        try {if(mic != null) mic.stop();}catch(Throwable ignored){}
         events.onFinal(finalText);
     }
 
@@ -184,9 +181,7 @@ final class JarvisStreamingStt {
             generation++;
             pending = "";
             live = "";
-            worker.execute(() -> {
-                try {if(mic != null) mic.stop();}catch(Throwable ignored){}
-            });
+            try {if(mic != null) mic.stop();}catch(Throwable ignored){}
             events.onState("off");
         });
     }
@@ -196,6 +191,7 @@ final class JarvisStreamingStt {
             closing = true;
             waiting = true;
             generation++;
+            try {if(mic != null) mic.stop();}catch(Throwable ignored){}
             worker.execute(() -> {
                 try {if(mic != null) mic.close();}catch(Throwable ignored){}
                 mic = null;
