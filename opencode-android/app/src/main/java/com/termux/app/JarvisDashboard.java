@@ -27,12 +27,12 @@ final class JarvisDashboard extends FrameLayout {
     private final TextView subtitle;
     private final Orb orb;
     private final Button speakButton;
-    private final int accent = Color.rgb(56, 220, 242);
+    private final int accent = Color.rgb(255, 156, 42);
     private boolean listening;
 
     JarvisDashboard(Context context, Actions actions) {
         super(context);
-        setBackgroundColor(Color.rgb(5, 12, 24));
+        setBackgroundColor(Color.rgb(15, 10, 7));
         LinearLayout stack = new LinearLayout(context);
         stack.setOrientation(LinearLayout.VERTICAL);
         stack.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -41,23 +41,32 @@ final class JarvisDashboard extends FrameLayout {
 
         TextView heading = new TextView(context);
         heading.setText("J A R V I S");
-        heading.setTextSize(26);
-        heading.setLetterSpacing(0.26f);
+        heading.setTextSize(29);
+        heading.setLetterSpacing(0.32f);
         heading.setTextColor(accent);
         heading.setGravity(Gravity.CENTER);
         stack.addView(heading, new LinearLayout.LayoutParams(-1, dp(50)));
 
         subtitle = new TextView(context);
-        subtitle.setText("PERSONAL INTELLIGENCE SYSTEM");
-        subtitle.setTextColor(Color.rgb(126, 161, 190));
+        subtitle.setText("ADAPTIVE PERSONAL OPERATIONS SYSTEM");
+        subtitle.setTextColor(Color.rgb(188, 151, 121));
         subtitle.setTextSize(10);
         subtitle.setLetterSpacing(0.14f);
         subtitle.setGravity(Gravity.CENTER);
         stack.addView(subtitle);
 
+        TextView telemetry = new TextView(context);
+        telemetry.setText("◈   CORE / ONLINE     •     VOICE / READY     •     AGENT / STANDBY");
+        telemetry.setTextColor(Color.rgb(208, 112, 48));
+        telemetry.setTextSize(9);
+        telemetry.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams telemetryParams = new LinearLayout.LayoutParams(-1, dp(27));
+        telemetryParams.topMargin = dp(9);
+        stack.addView(telemetry, telemetryParams);
+
         orb = new Orb(context);
         LinearLayout.LayoutParams orbParams = new LinearLayout.LayoutParams(dp(260), dp(260));
-        orbParams.topMargin = dp(20);
+        orbParams.topMargin = dp(4);
         stack.addView(orb, orbParams);
         orb.setContentDescription("Jarvis voice status");
         orb.setOnClickListener(v -> actions.toggleListening());
@@ -71,14 +80,14 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(state, new LinearLayout.LayoutParams(-1, dp(40)));
 
         TextView hint = new TextView(context);
-        hint.setText("Tap the core to begin a voice session");
+        hint.setText("Tap the reactor to activate your assistant");
         hint.setGravity(Gravity.CENTER);
-        hint.setTextColor(Color.rgb(154, 176, 191));
+        hint.setTextColor(Color.rgb(194, 159, 130));
         hint.setTextSize(12);
         stack.addView(hint);
 
         speakButton = new Button(context);
-        speakButton.setText("ACTIVATE VOICE");
+        speakButton.setText("ENGAGE ASSISTANT");
         speakButton.setContentDescription("Activate or stop Jarvis voice conversation");
         speakButton.setTextColor(Color.BLACK);
         speakButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));
@@ -88,7 +97,7 @@ final class JarvisDashboard extends FrameLayout {
         speakButton.setOnClickListener(v -> actions.toggleListening());
 
         TextView timelineTitle = new TextView(context);
-        timelineTitle.setText("ACTIVITY / OPERATIONS");
+        timelineTitle.setText("LIVE OPERATIONS / EXECUTION LOG");
         timelineTitle.setTextSize(11);
         timelineTitle.setLetterSpacing(0.12f);
         timelineTitle.setTextColor(accent);
@@ -98,12 +107,12 @@ final class JarvisDashboard extends FrameLayout {
 
         ScrollView scroll = new ScrollView(context);
         activity = new TextView(context);
-        activity.setText("System initialized. Awaiting voice activation.");
+        activity.setText("REACTOR READY   •   Awaiting voice activation.");
         activity.setTextSize(13);
-        activity.setTextColor(Color.rgb(193, 214, 228));
+        activity.setTextColor(Color.rgb(249, 218, 185));
         activity.setLineSpacing(dp(6), 1f);
         activity.setPadding(dp(12), dp(10), dp(12), dp(10));
-        activity.setBackgroundColor(Color.rgb(13, 29, 46));
+        activity.setBackgroundColor(Color.rgb(40, 25, 15));
         scroll.addView(activity);
         stack.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -128,7 +137,7 @@ final class JarvisDashboard extends FrameLayout {
         button.setText(label);
         button.setTextSize(10);
         button.setTextColor(accent);
-        button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(17, 44, 63)));
+        button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(66, 35, 13)));
         return button;
     }
 
@@ -137,7 +146,7 @@ final class JarvisDashboard extends FrameLayout {
         state.setText(s.toUpperCase(java.util.Locale.ROOT));
         listening = "listening".equals(s) || "hearing".equals(s);
         orb.setMode(s);
-        speakButton.setText(listening || "thinking".equals(s) || "transcribing".equals(s) ? "END VOICE SESSION" : "ACTIVATE VOICE");
+        speakButton.setText(listening || "thinking".equals(s) || "transcribing".equals(s) ? "END VOICE SESSION" : "ENGAGE ASSISTANT");
     }
 
     void addEvent(String message) {
@@ -157,28 +166,37 @@ final class JarvisDashboard extends FrameLayout {
             super.onDraw(canvas);
             float cx = getWidth()/2f, cy=getHeight()/2f;
             float radius = Math.min(cx,cy)*0.67f;
-            int primary = "hearing".equals(mode) || "listening".equals(mode) ? Color.rgb(26,244,220)
-                : "thinking".equals(mode) ? Color.rgb(90,154,255) : Color.rgb(42,194,228);
+            int primary = "hearing".equals(mode) || "listening".equals(mode) ? Color.rgb(255,190,65)
+                : "thinking".equals(mode) ? Color.rgb(255,107,30) : Color.rgb(255,145,34);
             paint.setStyle(Paint.Style.FILL);
             paint.setShader(new RadialGradient(cx,cy,radius*1.5f,
-                new int[]{0xAA0C738F,0x55417DA0,0x00000000},null,Shader.TileMode.CLAMP));
+                new int[]{0xAA9C3B0C,0x557C360F,0x00000000},null,Shader.TileMode.CLAMP));
             canvas.drawCircle(cx,cy,radius*1.5f,paint);
             paint.setShader(null);
             paint.setStyle(Paint.Style.STROKE);
             paint.setColor(primary);
             paint.setStrokeWidth(dpStatic(2));
+            paint.setStrokeCap(Paint.Cap.ROUND);
             for(int i=0;i<4;i++) {
                 paint.setAlpha(215-i*43);
                 canvas.drawCircle(cx,cy,radius*(0.72f+i*0.14f),paint);
             }
             paint.setAlpha(255);
+            paint.setShader(null);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dpStatic(3));
+            for (int i=0; i<12; i++) {
+                float start=i*30f-88f;
+                canvas.drawArc(cx-radius*1.10f, cy-radius*1.10f, cx+radius*1.10f, cy+radius*1.10f,
+                    start, 17, false, paint);
+            }
             paint.setStyle(Paint.Style.FILL);
             paint.setShader(new RadialGradient(cx,cy,radius*0.74f,
-                new int[]{0xFF84F5FF,primary,0xFF05304A},null,Shader.TileMode.CLAMP));
+                new int[]{0xFFFFD27E,primary,0xFF522007},null,Shader.TileMode.CLAMP));
             canvas.drawCircle(cx,cy,radius*0.72f,paint);
             paint.setShader(null);
             paint.setTextAlign(Paint.Align.CENTER);
-            paint.setColor(Color.rgb(4,30,45));
+            paint.setColor(Color.rgb(74, 29, 10));
             paint.setTextSize(radius*0.33f);
             paint.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));
             canvas.drawText("J",cx,cy+radius*0.12f,paint);
