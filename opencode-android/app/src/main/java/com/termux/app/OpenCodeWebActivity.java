@@ -69,6 +69,9 @@ public final class OpenCodeWebActivity extends Activity {
     private static final int PICK_FILE = 4120;
     private static final int VOICE_REQUEST = 4121;
     private TextToSpeech speech;
+    private volatile boolean ttsReady;
+    private String pendingSpeakText;
+    private String pendingSpeakId;
     private JarvisConversation jarvis;
     private Button jarvisButton;
     private JarvisDashboard dashboard;
@@ -94,6 +97,7 @@ public final class OpenCodeWebActivity extends Activity {
     // No cloud speech credentials are required by this Android integration.
     private String requestedVoiceEngine = "";
     private void initializeTts(String engine) {
+        ttsReady = false;
         if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
         requestedVoiceEngine = engine == null ? "" : engine;
         android.speech.tts.TextToSpeech.OnInitListener init = statusCode -> {
@@ -115,14 +119,21 @@ public final class OpenCodeWebActivity extends Activity {
                 String preferred = OpenCodeWebService.preferences(this).getString("jarvis_voice_name", "");
                 boolean applied = false;
                 if (!preferred.isEmpty()) {
-                    for (android.speech.tts.Voice voice : speech.getVoices()) {
+                    java.util.Set<android.speech.tts.Voice> currentVoices = speech.getVoices();
+                    if (currentVoices != null) for (android.speech.tts.Voice voice : currentVoices) {
                         if (preferred.equals(voice.getName())) {
                             applied = speech.setVoice(voice) == TextToSpeech.SUCCESS;
                             break;
                         }
                     }
                 }
-                if (!applied) speech.setLanguage(Locale.getDefault());
+                if (!applied) {
+                    int languageStatus = speech.setLanguage(Locale.getDefault());
+                    if (languageStatus == TextToSpeech.LANG_MISSING_DATA ||
+                        languageStatus == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        if (dashboard != null) dashboard.addEvent("VOICE WARNING  •  System language not installed in the TTS engine.");
+                    }
+                }
                 float rate = OpenCodeWebService.preferences(this).getFloat("jarvis_voice_rate", 1.0f);
                 float pitch = OpenCodeWebService.preferences(this).getFloat("jarvis_voice_pitch", 1.0f);
                 speech.setSpeechRate(rate);
@@ -147,18 +158,44 @@ public final class OpenCodeWebActivity extends Activity {
                         });
                     }
                 });
+                ttsReady = true;
                 handler.post(() -> {
-                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  " + speech.getDefaultEngine());
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE READY  •  " + speech.getDefaultEngine());
+                    if (pendingSpeakText != null) {
+                        String text = pendingSpeakText;
+                        String id = pendingSpeakId;
+                        pendingSpeakText = null;
+                        pendingSpeakId = null;
+                        speakJarvis(text, id);
+                    }
                 });
             } catch (Exception error) {
                 handler.post(() -> {
-                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Initialization failed.");
+                    ttsReady = false;
+                    if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Initialization failed: " + error.getClass().getSimpleName());
                 });
             }
         };
         speech = requestedVoiceEngine.isEmpty()
             ? new TextToSpeech(this, init)
             : new TextToSpeech(this, init, requestedVoiceEngine);
+    }
+
+    private void speakJarvis(String text, String id) {
+        if (text == null || text.trim().isEmpty()) return;
+        if (speech == null || !ttsReady) {
+            pendingSpeakText = text;
+            pendingSpeakId = id;
+            if (dashboard != null) dashboard.addEvent("VOICE ENGINE  •  Initializing speech...");
+            return;
+        }
+        android.os.Bundle params = new android.os.Bundle();
+        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC);
+        int result = speech.speak(text, TextToSpeech.QUEUE_FLUSH, params, id);
+        if (result == TextToSpeech.ERROR) {
+            if (dashboard != null) dashboard.addEvent("VOICE ERROR  •  Speech engine rejected playback. Open Voice Studio and preview a different voice.");
+            if (jarvis != null) jarvis.onAnswerUnavailable();
+        }
     }
 
     private void showVoiceSettings() {
@@ -171,8 +208,7 @@ public final class OpenCodeWebActivity extends Activity {
                     case 1: chooseInstalledVoice(); break;
                     case 2: chooseVoiceValue("jarvis_voice_rate", "Speech speed", 0.6f, 1.5f); break;
                     case 3: chooseVoiceValue("jarvis_voice_pitch", "Voice pitch", 0.7f, 1.3f); break;
-                    case 4: if (speech != null) speech.speak("Jarvis online. Your personal assistant is ready.",
-                        TextToSpeech.QUEUE_FLUSH, null, "jarvis-preview"); break;
+                    case 4: speakJarvis("Jarvis online. Your personal assistant is ready.", "jarvis-preview"); break;
                     case 5:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
                         catch (Exception unavailable) {
@@ -273,7 +309,7 @@ public final class OpenCodeWebActivity extends Activity {
                                 if (speech != null) {
                                     jarvisNarrating = jarvisAnswerPending;
                                     jarvisAnswerPending = false;
-                                    speech.speak(message, TextToSpeech.QUEUE_FLUSH, null, "oc-auto");
+                                    speakJarvis(message, "oc-auto");
                                 }
                             } else pendingNarration = message;
                         }
@@ -359,7 +395,7 @@ public final class OpenCodeWebActivity extends Activity {
                             if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
                             if (speech != null && jarvis != null && jarvis.isActive()) {
                                 dashboard.setState("speaking");
-                                speech.speak(response, TextToSpeech.QUEUE_FLUSH, null, "jarvis-native");
+                                speakJarvis(response, "jarvis-native");
                             } else if (jarvis != null) jarvis.onAnswerSpoken();
                         }
                         @Override public void onError(String diagnostic) {
@@ -530,7 +566,7 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void onSpeak(String result) {
                 if (speech != null) {
                     dashboard.setState("speaking");
-                    speech.speak(result, TextToSpeech.QUEUE_FLUSH, null, "jarvis-native");
+                    speakJarvis(result, "jarvis-native");
                 } else if (jarvis != null) jarvis.onAnswerSpoken();
             }
         });
