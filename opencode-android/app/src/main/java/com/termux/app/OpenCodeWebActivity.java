@@ -69,9 +69,9 @@ public final class OpenCodeWebActivity extends Activity {
     private static final int PICK_FILE = 4120;
     private static final int VOICE_REQUEST = 4121;
     private TextToSpeech speech;
-    private JarvisKokoroVoice kokoro;
-    private boolean preferKokoro = true;
-    private boolean kokoroFailed;
+    private JarvisSupertonicVoice supertonic;
+    private boolean preferSupertonic = true;
+    private boolean supertonicFailed;
     private String pendingNeuralText;
     private String pendingNeuralId;
     private String currentNeuralText;
@@ -191,16 +191,16 @@ public final class OpenCodeWebActivity extends Activity {
     private void speakAssistant(String text, String id) {
         String spoken = JarvisSpeechStyle.prepare(text);
         if (spoken.isEmpty()) return;
-        if (preferKokoro && kokoro != null && !kokoroFailed) {
-            if (kokoro.isReady()) {
+        if (preferSupertonic && supertonic != null && !supertonicFailed) {
+            if (supertonic.isReady()) {
                 currentNeuralText=spoken;
                 currentNeuralId=id;
-                kokoro.speak(spoken,id);
+                supertonic.speak(spoken,id);
             } else {
                 pendingNeuralText=spoken;
                 pendingNeuralId=id;
                 if (dashboard != null)
-                    dashboard.addEvent("KOKORO  •  Loading neural model. Speech is queued, not replaced with Android TTS.");
+                    dashboard.addEvent("SUPERTONIC  •  Loading neural model. Speech is queued, not replaced with Android TTS.");
             }
             return;
         }
@@ -227,9 +227,9 @@ public final class OpenCodeWebActivity extends Activity {
 
     private void showVoiceSettings() {
         final String[] options = {
-            "Primary speech engine: " + (preferKokoro ? "Kokoro 82M (native offline)" : "Android TTS"),
-            "Choose Kokoro voice",
-            "Kokoro speaking speed",
+            "Primary speech engine: " + (preferSupertonic ? "Supertonic 3 (native offline)" : "Android TTS"),
+            "Choose Supertonic voice",
+            "Supertonic speaking speed",
             "Preview Jarvis voice",
             "Android fallback TTS engine",
             "Android fallback voice",
@@ -239,14 +239,14 @@ public final class OpenCodeWebActivity extends Activity {
             .setItems(options, (dialog, choice) -> {
                 switch (choice) {
                     case 0:
-                        preferKokoro = !preferKokoro;
+                        preferSupertonic = !preferSupertonic;
                         OpenCodeWebService.preferences(this).edit()
-                            .putBoolean("jarvis_prefer_kokoro", preferKokoro).apply();
+                            .putBoolean("jarvis_prefer_supertonic", preferSupertonic).apply();
                         if (dashboard != null) dashboard.addEvent("VOICE PATH  •  " +
-                            (preferKokoro ? "Kokoro native neural" : "Android system TTS"));
+                            (preferSupertonic ? "Supertonic native neural" : "Android system TTS"));
                         break;
-                    case 1: chooseKokoroVoice(); break;
-                    case 2: chooseKokoroSpeed(); break;
+                    case 1: chooseSupertonicVoice(); break;
+                    case 2: chooseSupertonicSpeed(); break;
                     case 3: speakAssistant("Good evening. Jarvis is online, and your assistant is ready.", "jarvis-preview"); break;
                     case 4: chooseTtsEngine(); break;
                     case 5: chooseInstalledVoice(); break;
@@ -258,34 +258,33 @@ public final class OpenCodeWebActivity extends Activity {
             }).setNegativeButton("Close", null).show();
     }
 
-    private void chooseKokoroVoice() {
+    private void chooseSupertonicVoice() {
         String[] voiceNames = {
-            "0 · American female", "1 · Bella (US female)", "2 · Nicole (US female)",
-            "3 · Sarah (US female)", "4 · Sky (US female)", "5 · Adam (US male)",
-            "6 · Michael (US male)", "7 · Emma (UK female)",
-            "8 · Isabella (UK female)", "9 · George (UK male)", "10 · Lewis (UK male)"
+            "0 · Voice 1", "1 · Voice 2", "2 · Voice 3", "3 · Voice 4",
+            "4 · Voice 5", "5 · Voice 6", "6 · Voice 7", "7 · Voice 8",
+            "8 · Voice 9", "9 · Voice 10"
         };
-        int current = OpenCodeWebService.preferences(this).getInt("jarvis_kokoro_voice", 10);
-        new AlertDialog.Builder(this).setTitle("Kokoro offline neural voices")
+        int current = OpenCodeWebService.preferences(this).getInt("jarvis_supertonic_voice", 0);
+        new AlertDialog.Builder(this).setTitle("Supertonic offline neural voices")
             .setSingleChoiceItems(voiceNames, current, (dialog, which) -> {
-                OpenCodeWebService.preferences(this).edit().putInt("jarvis_kokoro_voice", which).apply();
-                if (kokoro != null) kokoro.setVoice(which);
+                OpenCodeWebService.preferences(this).edit().putInt("jarvis_supertonic_voice", which).apply();
+                if (supertonic != null) supertonic.setVoice(which);
                 dialog.dismiss();
-                if (dashboard != null) dashboard.addEvent("KOKORO VOICE  •  " + voiceNames[which]);
+                if (dashboard != null) dashboard.addEvent("SUPERTONIC VOICE  •  " + voiceNames[which]);
                 speakAssistant("Voice calibration complete. At your service.", "jarvis-preview");
             }).setNegativeButton("Cancel", null).show();
     }
 
-    private void chooseKokoroSpeed() {
+    private void chooseSupertonicSpeed() {
         android.widget.SeekBar speedControl = new android.widget.SeekBar(this);
         speedControl.setMax(45);
-        float current = OpenCodeWebService.preferences(this).getFloat("jarvis_kokoro_speed", .97f);
+        float current = OpenCodeWebService.preferences(this).getFloat("jarvis_supertonic_speed", 1.05f);
         speedControl.setProgress(Math.max(0,Math.min(45,Math.round((current-.75f)*100f))));
-        new AlertDialog.Builder(this).setTitle("Kokoro delivery speed")
+        new AlertDialog.Builder(this).setTitle("Supertonic delivery speed")
             .setView(speedControl).setPositiveButton("Apply", (dialog,which) -> {
                 float speed=.75f+speedControl.getProgress()/100f;
-                OpenCodeWebService.preferences(this).edit().putFloat("jarvis_kokoro_speed",speed).apply();
-                if(kokoro!=null)kokoro.setSpeed(speed);
+                OpenCodeWebService.preferences(this).edit().putFloat("jarvis_supertonic_speed",speed).apply();
+                if(supertonic!=null)supertonic.setSpeed(speed);
                 speakAssistant("Speech pacing adjusted. How does that sound?", "jarvis-preview");
             }).setNegativeButton("Cancel",null).show();
     }
@@ -443,11 +442,11 @@ public final class OpenCodeWebActivity extends Activity {
         status.setTextColor(Color.rgb(160, 160, 160));
         status.setTextSize(11);
         toolbar.addView(status);
-        preferKokoro = OpenCodeWebService.preferences(this).getBoolean("jarvis_prefer_kokoro", true);
+        preferSupertonic = OpenCodeWebService.preferences(this).getBoolean("jarvis_prefer_supertonic", true);
         initializeTts(OpenCodeWebService.preferences(this).getString("jarvis_voice_engine", ""));
-        kokoro = new JarvisKokoroVoice(this, new JarvisKokoroVoice.Events() {
+        supertonic = new JarvisSupertonicVoice(this, new JarvisSupertonicVoice.Events() {
             @Override public void ready() {
-                if (dashboard != null) dashboard.addEvent("KOKORO 82M  •  Native neural voice ready (offline).");
+                if (dashboard != null) dashboard.addEvent("SUPERTONIC 82M  •  Native neural voice ready (offline).");
                 if (pendingNeuralText != null) {
                     String text=pendingNeuralText, id=pendingNeuralId;
                     pendingNeuralText=null; pendingNeuralId=null;
@@ -462,10 +461,10 @@ public final class OpenCodeWebActivity extends Activity {
                 if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
             }
             @Override public void failed(String id, String reason) {
-                if (dashboard != null) dashboard.addEvent("KOKORO ERROR  •  " + reason);
+                if (dashboard != null) dashboard.addEvent("SUPERTONIC ERROR  •  " + reason);
                 if ("initialization".equals(id)) {
-                    kokoroFailed=true;
-                    if (dashboard != null) dashboard.addEvent("VOICE  •  Kokoro unavailable; switching to Android TTS.");
+                    supertonicFailed=true;
+                    if (dashboard != null) dashboard.addEvent("VOICE  •  Supertonic unavailable; switching to Android TTS.");
                     if (pendingNeuralText != null) {
                         String text=pendingNeuralText, uid=pendingNeuralId;
                         pendingNeuralText=null; pendingNeuralId=null;
@@ -481,8 +480,8 @@ public final class OpenCodeWebActivity extends Activity {
                 }
             }
         });
-        kokoro.setVoice(OpenCodeWebService.preferences(this).getInt("jarvis_kokoro_voice", 10));
-        kokoro.setSpeed(OpenCodeWebService.preferences(this).getFloat("jarvis_kokoro_speed", 0.97f));
+        supertonic.setVoice(OpenCodeWebService.preferences(this).getInt("jarvis_supertonic_voice", 0));
+        supertonic.setSpeed(OpenCodeWebService.preferences(this).getFloat("jarvis_supertonic_speed", 1.05f));
         engineClient = new JarvisEngineClient(this);
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
             @Override public void onTranscript(String transcript) {
@@ -503,7 +502,7 @@ public final class OpenCodeWebActivity extends Activity {
                         @Override public void onResult(String response) {
                             jarvisAnswerPending = false;
                             if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
-                            if (speech != null && jarvis != null && jarvis.isActive()) {
+                            if (jarvis != null && jarvis.isActive()) {
                                 dashboard.setState("speaking");
                                 speakAssistant(response, "jarvis-native");
                             } else if (jarvis != null) jarvis.onAnswerSpoken();
@@ -528,7 +527,7 @@ public final class OpenCodeWebActivity extends Activity {
         jarvisButton.setBackgroundColor(Color.TRANSPARENT);
         jarvisButton.setOnClickListener(v -> {
             if (speech != null) speech.stop();
-            if (kokoro != null) kokoro.stop();
+            if (supertonic != null) supertonic.stop();
             jarvis.toggle();
             autoNarrate = false;
             handler.removeCallbacks(narrationPoll);
@@ -666,7 +665,7 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void openSettings() { showVoiceSettings(); }
             @Override public void stopSpeaking() {
                 if (speech != null) speech.stop();
-                if (kokoro != null) kokoro.stop();
+                if (supertonic != null) supertonic.stop();
                 if (dashboard != null) dashboard.setState("standby");
                 if (jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
             }
@@ -1113,7 +1112,7 @@ public final class OpenCodeWebActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
         if (engineClient != null) engineClient.close();
-        if (kokoro != null) kokoro.close();
+        if (supertonic != null) supertonic.close();
         if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (!rendererGone) web.destroy();
