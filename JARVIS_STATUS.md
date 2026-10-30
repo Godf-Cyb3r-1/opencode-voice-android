@@ -1,28 +1,31 @@
-# Jarvis Assistant prototype (experimental)
+# Jarvis Android — amber assistant development branch
 
-This branch extends the existing OpenCode Android host. It is **not** a complete Jarvis implementation.
+## Product
+This is intended to be an action-first personal assistant, not a general question-and-answer chatbot. The home screen is a **native amber/orange reactor HUD**, with state indicators, a tappable activation core and a real operation timeline. OpenCode is intended to stay under the surface as the planning, reasoning and tool engine. The conventional OpenCode interface is retained under ENGINE only for configuration and diagnostics.
 
-## What is available
-- A new **◎** button in the Android toolbar toggles an in-app voice conversation.
-- Android SpeechRecognizer listens in foreground, transcribes a phrase and tries to send it to the existing OpenCode web composer.
-- The current best-effort response narration uses the existing DOM polling mechanism; Android TTS speaks the result and then the voice controller reopens listening.
-- A separate microphone button remains for ordinary one-shot dictation.
-- Press **◎** again to stop voice mode.
+## Implemented code (NOT device verified)
+- Orange/amber charcoal JarvisDashboard with a frame-animated original reactor HUD (opposed rotating segmented rings, orbital sweep, 72 responsive radial signal bars, bloom, breathing core), activity/operations console and listening/working/speaking status. Rendering uses native Android Canvas, no remote animation dependency.
+- Foreground speech transcription via Android SpeechRecognizer and responses via Android TextToSpeech.
+- JarvisActionRouter for real system intents: camera, settings, dialer, maps/navigation, browser, web search, SMS draft, and alarm creation/review.
+- Voice controls and Android permissions.
+- Separate feature branch with GitHub Actions enabled.
 
-## Limitations / important safety constraints
-- Requires an Android speech recognition service and Android microphone permission; on-device/offline support is device-dependent.
-- This prototype does not implement a wake word, microphone access while the screen is off, phone automation, notification access, persistent memory, or a guaranteed always-listening mode.
-- Sending uses a best-effort web composer selector and a submit button/Enter event. Some upstream Web UI revisions will not submit; those integrations require explicit OpenCode session APIs rather than DOM automation.
-- Narration guesses completion from UI stability. It can miss a response, speak an incomplete response, or wait indefinitely. In future, use OpenCode's authenticated session event stream and real completion events.
-- Android's standard SpeechRecognizer isn't designed for continuous recognition; the controller stops after repeated recognition failures.
-- The package still uses `com.termux`. A correct package rename requires migrating the native embedded environment: hardcoded `/data/data/com.termux` executable paths, bootstrap prefix, provider/manifest authorities, shared libraries, and initialization logic. Changing the Gradle applicationId alone would break runtime.
-- The source branch has not been compiled or device-tested in this environment. Use GitHub Actions and test only on a backed-up sandbox device.
+## Remaining gaps before it behaves like Jarvis
+- **Not autonomous yet**: the OpenCode fallback still injects text into a hidden WebView composer. It can answer text but does not yet plan and execute multi-step personal tasks through a native tool/action architecture.
+- Migrate to OpenCode's authenticated session API, tool-call events and verified completion; remove DOM scraping and composer injection.
+- Implement an agent action registry and task planner that understands goals, asks for missing information only when needed, executes, verifies outcomes and resumes.
+- Interruptible streaming voice, true audio focus, echo cancellation, turn detection and optional wake-word engine.
+- Confirmed Android capability registry: reminders/notifications/calendar, contacts (with permission), applications, files, connectivity control, etc. Use appropriate scoped permissions and Android system restrictions.
+- Persistent user-controlled memory, task state and recovery, user preferences.
+- Screen-off listening is not supported by the current foreground UI controller; Android background microphone permissions/restrictions must be handled separately.
+- Application display name is Jarvis Assistant but **package ID is still com.termux**; native bootstrap hardcodes its filesystem prefix. A safe unique ID requires recompilation/migration of that runtime and provider authorities.
+- This branch has not been compiled or tested on a device from this chat. Do not claim finished APK or merge into main yet.
 
-## Follow-up implementation stages
-1. Replace browser-DOM prompt insertion and narration polling with OpenCode session APIs and event streams.
-2. Add explicit speaking/listening state transitions, response timeouts, audio focus and echo suppression.
-3. Implement assistant-style actions as permission-scoped Android capabilities and OpenCode tools.
-4. Create a new native bootstrap and filesystem migration for a dedicated application ID (for example, `dev.godfcyber.jarvis`), **then** rename every affected manifest, code, and runtime path.
-5. Add optional on-device wake-word recognition and a controlled foreground service that follows Android microphone restrictions.
+## Usage and testing
+Switch to branch `feature/jarvis-assistant-v1` on GitHub Actions and build an experimental APK. Back up any existing Termux/OpenCode data, because the application currently shares the `com.termux` ID and a fresh CI signing key won't update older installs. Use only a sandbox device until runtime, UI and security checks pass.
 
-No exposed personal access tokens should be stored in this repository or Actions secrets.
+## Security
+No personal GitHub access token is required in source files. Any token previously posted in chat should be revoked, and a new token (if needed) stored only through provider-approved credentials management.
+
+## Cinematic HUD note
+The user supplied an animated Tumblr GIF as a visual reference. Remote fetch was unavailable in this development session, so the UI is an original interpretation, **not** a verified frame-for-frame replica. Animation is driven by Android View redraw, pauses when detached/hidden, and reflects the assistant's current recognition/response state. It requires profiling on the target Android device. This is not an AI simulation; it is UI presentation attached to the existing experimental voice/actions runtime.
