@@ -159,12 +159,19 @@ final class JarvisKokoroVoice {
                         at+=n;
                     }
                     if(ticket==generation.get() && !closed) {
-                        long ms=(long)(1000.0*pcm.length/sampleRate);
-                        // AudioTrack.write() queues PCM, not necessarily finished playback.
-                        Thread.sleep(Math.min(10000,Math.max(0,ms-160)));
+                        long deadline=android.os.SystemClock.elapsedRealtime()
+                            + (long)(1000.0*pcm.length/sampleRate)+2000;
+                        // Wait for the actual playback head instead of sleeping for
+                        // a second full duration after the blocking PCM writes.
+                        while(ticket==generation.get() && !closed
+                                && track.getPlaybackHeadPosition()<pcm.length
+                                && android.os.SystemClock.elapsedRealtime()<deadline) {
+                            Thread.sleep(25);
+                        }
                     }
                     synchronized(this){if(player==track)player=null;}
-                    track.pause();track.flush();track.release();
+                    try {track.pause();track.flush();}catch(Exception ignored){}
+                    track.release();
                 }
                 if(!closed && ticket==generation.get()) main.post(()->events.completed(id));
             } catch(Throwable e) {
@@ -178,7 +185,7 @@ final class JarvisKokoroVoice {
         generation.incrementAndGet();
         synchronized(this) {
             if(player!=null) {
-                try {player.pause();player.flush();player.release();}catch(Exception ignored){}
+                try {player.pause();player.flush();}catch(Exception ignored){}
                 player=null;
             }
         }
