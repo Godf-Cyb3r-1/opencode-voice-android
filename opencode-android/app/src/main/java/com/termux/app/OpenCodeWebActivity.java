@@ -73,6 +73,7 @@ public final class OpenCodeWebActivity extends Activity {
     private Button jarvisButton;
     private JarvisDashboard dashboard;
     private JarvisActionRouter actionRouter;
+    private JarvisEngineClient engineClient;
     private boolean showEngineConsole;
     private void toggleEngineConsole() {
         showEngineConsole = !showEngineConsole;
@@ -194,6 +195,7 @@ public final class OpenCodeWebActivity extends Activity {
                 });
             }
         });
+        engineClient = new JarvisEngineClient(this);
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
             @Override public void onTranscript(String transcript) {
                 jarvisAnswerPending = true;
@@ -202,7 +204,32 @@ public final class OpenCodeWebActivity extends Activity {
                 if (handleNativeAssistantAction(transcript)) {
                     jarvisAnswerPending = false;
                     if (speech == null) jarvis.onAnswerSpoken();
-                } else insertTranscript(transcript, true);
+                } else if (engineClient != null) {
+                    engineClient.submit(transcript, new JarvisEngineClient.Callback() {
+                        @Override public void onStage(String stage) {
+                            if (dashboard != null) {
+                                dashboard.setState("working");
+                                dashboard.addEvent("AGENT  •  " + stage);
+                            }
+                        }
+                        @Override public void onResult(String response) {
+                            jarvisAnswerPending = false;
+                            if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
+                            if (speech != null && jarvis != null && jarvis.isActive()) {
+                                dashboard.setState("speaking");
+                                speech.speak(response, TextToSpeech.QUEUE_FLUSH, null, "jarvis-native");
+                            } else if (jarvis != null) jarvis.onAnswerSpoken();
+                        }
+                        @Override public void onError(String diagnostic) {
+                            jarvisAnswerPending = false;
+                            if (dashboard != null) {
+                                dashboard.setState("error");
+                                dashboard.addEvent("ENGINE ERROR  •  " + diagnostic);
+                            }
+                            if (jarvis != null) jarvis.stop();
+                        }
+                    });
+                }
             }
             @Override public void onState(String state) { updateJarvisLabel(state); }
         });
@@ -214,9 +241,8 @@ public final class OpenCodeWebActivity extends Activity {
         jarvisButton.setOnClickListener(v -> {
             if (speech != null) speech.stop();
             jarvis.toggle();
-            autoNarrate = jarvis.isActive();
+            autoNarrate = false;
             handler.removeCallbacks(narrationPoll);
-            if (autoNarrate) handler.post(narrationPoll);
             updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
         });
         toolbar.addView(jarvisButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -343,9 +369,8 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void toggleListening() {
                 if (speech != null) speech.stop();
                 jarvis.toggle();
-                autoNarrate = jarvis.isActive();
+                autoNarrate = false;
                 handler.removeCallbacks(narrationPoll);
-                if (autoNarrate) handler.post(narrationPoll);
                 updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
             }
             @Override public void openConsole() { toggleEngineConsole(); }
@@ -799,6 +824,7 @@ public final class OpenCodeWebActivity extends Activity {
         handler.removeCallbacks(narrationPoll);
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
+        if (engineClient != null) engineClient.close();
         if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);
         if (!rendererGone) web.destroy();
