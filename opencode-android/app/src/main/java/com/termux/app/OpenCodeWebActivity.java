@@ -493,18 +493,7 @@ public final class OpenCodeWebActivity extends Activity {
                     jarvisAnswerPending = false;
                     if (speech == null) jarvis.onAnswerSpoken();
                 } else if (engineClient != null) {
-                    final String[] earlySentence = {""};
                     engineClient.submit(transcript, new JarvisEngineClient.Callback() {
-                        @Override public void onPartial(String sentence) {
-                            // Do not restart listening when the first sentence ends;
-                            // the agent may still be executing its remaining steps.
-                            if (jarvis == null || !jarvis.isActive()) return;
-                            if (preferKokoro && kokoro != null && kokoro.isReady()) {
-                                earlySentence[0] = sentence;
-                                kokoro.speak(sentence, "jarvis-preview");
-                                if (dashboard != null) dashboard.addEvent("LIVE SPEECH  •  First sentence ready.");
-                            }
-                        }
                         @Override public void onStage(String stage) {
                             if (dashboard != null) {
                                 dashboard.setState("working");
@@ -516,14 +505,7 @@ public final class OpenCodeWebActivity extends Activity {
                             if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
                             if (speech != null && jarvis != null && jarvis.isActive()) {
                                 dashboard.setState("speaking");
-                                String first = earlySentence[0];
-                                String rest = response;
-                                if (!first.isEmpty() && response.startsWith(first))
-                                    rest = response.substring(first.length()).trim();
-                                if (!first.isEmpty() && kokoro != null && kokoro.isReady()) {
-                                    if (!rest.isEmpty()) kokoro.append(rest, "jarvis-native");
-                                    else kokoro.finishQueuedTurn("jarvis-native");
-                                } else speakAssistant(rest, "jarvis-native");
+                                speakAssistant(response, "jarvis-native");
                             } else if (jarvis != null) jarvis.onAnswerSpoken();
                         }
                         @Override public void onError(String diagnostic) {
