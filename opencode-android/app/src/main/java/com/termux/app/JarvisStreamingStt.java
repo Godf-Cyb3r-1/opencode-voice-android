@@ -113,6 +113,7 @@ final class JarvisStreamingStt {
             if (closing || waiting) return;
             String current = text == null ? "" : text.trim();
             if (current.isEmpty()) return;
+            if (current.equals(live)) return; // Identical updates must not postpone the turn forever.
             live = current;
             generation++;
             events.onPartial(join(pending, current));
