@@ -246,7 +246,7 @@ public final class OpenCodeWebActivity extends Activity {
                             (preferPocket ? "Pocket TTS native neural" : "Android system TTS"));
                         break;
                     case 1: choosePocketReference(); break;
-                    case 2: choosePocket TTSSpeed(); break;
+                    case 2: choosePocketSpeed(); break;
                     case 3: speakAssistant("Good evening. Jarvis is online, and your assistant is ready.", "jarvis-preview"); break;
                     case 4: chooseTtsEngine(); break;
                     case 5: chooseInstalledVoice(); break;
@@ -266,7 +266,7 @@ public final class OpenCodeWebActivity extends Activity {
         startActivityForResult(pick, PICK_REFERENCE_AUDIO);
     }
 
-    private void choosePocket TTSSpeed() {
+    private void choosePocketSpeed() {
         android.widget.SeekBar speedControl = new android.widget.SeekBar(this);
         speedControl.setMax(45);
         float current = OpenCodeWebService.preferences(this).getFloat("jarvis_pocket_speed", 1.05f);
