@@ -160,7 +160,7 @@ final class JarvisSupertonicVoice {
                     Map<String,String> extra = new HashMap<>();
                     extra.put("lang", "en");
                     cfg.setExtra(extra);
-                    GeneratedAudio audio=model.generateWithConfig(phrase,cfg);
+                    GeneratedAudio audio=model.generateWithConfigAndCallback(phrase,cfg,samples -> 1);
                     float[] samples=audio.getSamples();
                     int sampleRate=audio.getSampleRate();
                     if (samples==null || samples.length==0) throw new IllegalStateException("Kokoro produced empty audio");
