@@ -69,6 +69,17 @@ public final class OpenCodeWebActivity extends Activity {
     private static final int PICK_FILE = 4120;
     private static final int VOICE_REQUEST = 4121;
     private TextToSpeech speech;
+    private JarvisConversation jarvis;
+    private Button jarvisButton;
+    private boolean jarvisAnswerPending;
+    private boolean jarvisNarrating;
+    private void updateJarvisLabel(String state) {
+        if (jarvisButton != null) {
+            jarvisButton.setText(jarvis != null && jarvis.isActive() ? "●" : "◎");
+            jarvisButton.setContentDescription("Jarvis: " + state);
+        }
+        if (status != null && jarvis != null && jarvis.isActive()) status.setText("Jarvis " + state);
+    }
     private boolean autoNarrate = false;
     private String lastNarrated = "";
     private final Runnable narrationPoll = new Runnable() {
@@ -86,7 +97,11 @@ public final class OpenCodeWebActivity extends Activity {
                             if (message.equals(pendingNarration)) {
                                 lastNarrated = message;
                                 pendingNarration = "";
-                                if (speech != null) speech.speak(message, TextToSpeech.QUEUE_FLUSH, null, "oc-auto");
+                                if (speech != null) {
+                                    jarvisNarrating = jarvisAnswerPending;
+                                    jarvisAnswerPending = false;
+                                    speech.speak(message, TextToSpeech.QUEUE_FLUSH, null, "oc-auto");
+                                }
                             } else pendingNarration = message;
                         }
                     } catch (Exception ignored) { }
@@ -148,8 +163,46 @@ public final class OpenCodeWebActivity extends Activity {
         status.setTextSize(11);
         toolbar.addView(status);
         speech = new TextToSpeech(this, statusCode -> {
-            if (statusCode == TextToSpeech.SUCCESS && speech != null) speech.setLanguage(Locale.getDefault());
+            if (statusCode == TextToSpeech.SUCCESS && speech != null) {
+                speech.setLanguage(Locale.getDefault());
+                speech.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                    @Override public void onStart(String id) { }
+                    @Override public void onDone(String id) {
+                        handler.post(() -> {
+                            if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
+                                jarvisNarrating = false;
+                                jarvis.onAnswerSpoken();
+                            }
+                        });
+                    }
+                    @Override public void onError(String id) {
+                        handler.post(() -> { if (jarvis != null) jarvis.onAnswerUnavailable(); });
+                    }
+                });
+            }
         });
+        jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
+            @Override public void onTranscript(String transcript) {
+                jarvisAnswerPending = true;
+                pendingNarration = "";
+                insertTranscript(transcript, true);
+            }
+            @Override public void onState(String state) { updateJarvisLabel(state); }
+        });
+        jarvisButton = new Button(this);
+        jarvisButton.setText("◎");
+        jarvisButton.setContentDescription("Start Jarvis hands-free conversation");
+        jarvisButton.setTextColor(Color.GREEN);
+        jarvisButton.setBackgroundColor(Color.TRANSPARENT);
+        jarvisButton.setOnClickListener(v -> {
+            if (speech != null) speech.stop();
+            jarvis.toggle();
+            autoNarrate = jarvis.isActive();
+            handler.removeCallbacks(narrationPoll);
+            if (autoNarrate) handler.post(narrationPoll);
+            updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+        });
+        toolbar.addView(jarvisButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
         Button mic = new Button(this);
         mic.setText("🎤");
         mic.setContentDescription("Dictate to OpenCode");
@@ -589,6 +642,13 @@ public final class OpenCodeWebActivity extends Activity {
         }
     }
 
+    @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(code, permissions, grantResults);
+        if (code == 4122 && jarvis != null)
+            jarvis.onPermissionResult(grantResults.length > 0 &&
+                    grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED);
+    }
+
     @Override public void onBackPressed() {
         if (!rendererGone && web.canGoBack()) web.goBack(); else super.onBackPressed();
     }
@@ -608,7 +668,8 @@ public final class OpenCodeWebActivity extends Activity {
         }
     }
 
-    private void insertTranscript(String transcript) {
+    private void insertTranscript(String transcript) { insertTranscript(transcript, false); }
+    private void insertTranscript(String transcript, boolean submit) {
         if (web == null || loadedOrigin == null) {
             new AlertDialog.Builder(this).setMessage(transcript).setPositiveButton("OK", null).show();
             return;
@@ -618,13 +679,19 @@ public final class OpenCodeWebActivity extends Activity {
         String js = "(function(){const e=document.querySelector('[contenteditable=\"true\"][data-placeholder], [role=\"textbox\"][contenteditable=\"true\"], textarea, [contenteditable=\"true\"]');" +
             "if(!e)return false;e.focus();if(e.isContentEditable){document.execCommand('insertText',false," + quoted + ");}" +
             "else{const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;setter.call(e," + quoted + ");}" +
-            "e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:" + quoted + "}));return true;})()";
+            "e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:" + quoted + "}));" +
+            (submit ? "setTimeout(()=>{const b=document.querySelector('button[type=submit]');if(b&&!b.disabled)b.click();else e.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'Enter',code:'Enter'}));},200);" : "") +
+            "return true;})()";
         web.evaluateJavascript(js, result -> {
-            if (!"true".equals(result)) new AlertDialog.Builder(this).setTitle("Transcription")
+            if (!"true".equals(result)) {
+                jarvisAnswerPending = false;
+                if (jarvis != null && jarvis.isActive()) jarvis.stop();
+                new AlertDialog.Builder(this).setTitle("Transcription")
                 .setMessage(transcript).setPositiveButton("Copy", (d,w) -> {
                     android.content.ClipboardManager c = (android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
                     c.setPrimaryClip(android.content.ClipData.newPlainText("Voice transcript", transcript));
                 }).setNegativeButton("Close", null).show();
+            }
         });
     }
 
@@ -670,6 +737,7 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (jarvis != null) jarvis.stop();
         handler.removeCallbacks(narrationPoll);
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
