@@ -72,6 +72,7 @@ public final class OpenCodeWebActivity extends Activity {
     private JarvisConversation jarvis;
     private Button jarvisButton;
     private JarvisDashboard dashboard;
+    private JarvisActionRouter actionRouter;
     private boolean showEngineConsole;
     private void toggleEngineConsole() {
         showEngineConsole = !showEngineConsole;
@@ -152,8 +153,8 @@ public final class OpenCodeWebActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().setStatusBarColor(Color.rgb(18, 18, 18));
-        getWindow().setNavigationBarColor(Color.rgb(18, 18, 18));
+        getWindow().setStatusBarColor(Color.rgb(22, 12, 7));
+        getWindow().setNavigationBarColor(Color.rgb(22, 12, 7));
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -175,7 +176,9 @@ public final class OpenCodeWebActivity extends Activity {
             if (statusCode == TextToSpeech.SUCCESS && speech != null) {
                 speech.setLanguage(Locale.getDefault());
                 speech.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
-                    @Override public void onStart(String id) { }
+                    @Override public void onStart(String id) {
+                        handler.post(() -> { if (dashboard != null) dashboard.setState("speaking"); });
+                    }
                     @Override public void onDone(String id) {
                         handler.post(() -> {
                             if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
@@ -356,6 +359,17 @@ public final class OpenCodeWebActivity extends Activity {
             }
         });
         body.addView(dashboard, new FrameLayout.LayoutParams(-1, -1));
+        actionRouter = new JarvisActionRouter(this, new JarvisActionRouter.Feedback() {
+            @Override public void onEvent(String label, String detail) {
+                if (dashboard != null) dashboard.addEvent(label + "  •  " + detail);
+            }
+            @Override public void onSpeak(String result) {
+                if (speech != null) {
+                    dashboard.setState("speaking");
+                    speech.speak(result, TextToSpeech.QUEUE_FLUSH, null, "jarvis-native");
+                } else if (jarvis != null) jarvis.onAnswerSpoken();
+            }
+        });
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
         dashboard.setState("initializing");
@@ -375,35 +389,7 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     private boolean handleNativeAssistantAction(String request) {
-        String command = request.toLowerCase(Locale.ROOT).trim();
-        try {
-            Intent intent = null;
-            String confirmation = null;
-            if (command.equals("open settings") || command.equals("phone settings")) {
-                intent = new Intent(android.provider.Settings.ACTION_SETTINGS);
-                confirmation = "Opening phone settings.";
-            } else if (command.equals("open camera") || command.equals("launch camera")) {
-                intent = new Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
-                confirmation = "Opening the camera.";
-            } else if (command.equals("open dialer") || command.equals("open phone")) {
-                intent = new Intent(Intent.ACTION_DIAL);
-                confirmation = "Opening the dialer.";
-            } else if (command.equals("open browser")) {
-                intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"));
-                confirmation = "Opening the browser.";
-            } else if (command.equals("set alarm") || command.equals("open alarms")) {
-                intent = new Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS);
-                confirmation = "Opening alarms.";
-            }
-            if (intent == null) return false;
-            startActivity(intent);
-            if (dashboard != null) dashboard.addEvent("ANDROID ACTION  •  " + confirmation);
-            if (speech != null) speech.speak(confirmation, TextToSpeech.QUEUE_FLUSH, null, "jarvis-native");
-            return true;
-        } catch (Exception e) {
-            if (dashboard != null) dashboard.addEvent("ANDROID ACTION  •  Unable to open requested app.");
-            return true;
-        }
+        return actionRouter != null && actionRouter.execute(request);
     }
 
     private void begin() {
