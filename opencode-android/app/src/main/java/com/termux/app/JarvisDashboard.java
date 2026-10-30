@@ -121,7 +121,7 @@ final class JarvisDashboard extends FrameLayout {
         Button mute = utility(context, "SILENCE");
         mute.setOnClickListener(v -> actions.stopSpeaking());
         tools.addView(mute, new LinearLayout.LayoutParams(0, dp(50), 1));
-        Button settings = utility(context, "PHONE SETTINGS");
+        Button settings = utility(context, "VOICE STUDIO");
         settings.setOnClickListener(v -> actions.openSettings());
         tools.addView(settings, new LinearLayout.LayoutParams(0, dp(50), 1));
         Button console = utility(context, "ENGINE");
