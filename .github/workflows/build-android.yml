@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -64,7 +64,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Streaming-STT-Pocket-TTS-Universal-APK
+          name: Jarvis-STT-Endpoint-Fix-Universal-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
