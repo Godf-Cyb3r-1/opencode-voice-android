@@ -71,6 +71,12 @@ public final class OpenCodeWebActivity extends Activity {
     private TextToSpeech speech;
     private JarvisConversation jarvis;
     private Button jarvisButton;
+    private JarvisDashboard dashboard;
+    private boolean showEngineConsole;
+    private void toggleEngineConsole() {
+        showEngineConsole = !showEngineConsole;
+        if (dashboard != null) dashboard.setVisibility(showEngineConsole ? View.GONE : View.VISIBLE);
+    }
     private boolean jarvisAnswerPending;
     private boolean jarvisNarrating;
     private void updateJarvisLabel(String state) {
@@ -79,6 +85,7 @@ public final class OpenCodeWebActivity extends Activity {
             jarvisButton.setContentDescription("Jarvis: " + state);
         }
         if (status != null && jarvis != null && jarvis.isActive()) status.setText("Jarvis " + state);
+        if (dashboard != null) dashboard.setState(state);
     }
     private boolean autoNarrate = false;
     private String lastNarrated = "";
@@ -95,6 +102,7 @@ public final class OpenCodeWebActivity extends Activity {
                                 !message.endsWith("▍") && !message.endsWith("…")) {
                             // Delay speaking until the same text remains stable across polls.
                             if (message.equals(pendingNarration)) {
+                                if (dashboard != null) dashboard.addEvent("ASSISTANT RESPONSE  •  " + message);
                                 lastNarrated = message;
                                 pendingNarration = "";
                                 if (speech != null) {
@@ -120,6 +128,7 @@ public final class OpenCodeWebActivity extends Activity {
                 status.setText(R.string.oc_unresponsive_short);
             } else if ("ready".equals(state)) {
                 status.setText(R.string.oc_on_device);
+                if (dashboard != null && jarvis != null && !jarvis.isActive()) dashboard.setState("standby");
                 String origin = OpenCodeWebService.origin();
                 if (!rendererGone && !origin.equals(loadedOrigin)) {
                     loadedOrigin = origin;
@@ -185,7 +194,11 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void onTranscript(String transcript) {
                 jarvisAnswerPending = true;
                 pendingNarration = "";
-                insertTranscript(transcript, true);
+                if (dashboard != null) dashboard.addEvent("VOICE REQUEST  •  " + transcript);
+                if (handleNativeAssistantAction(transcript)) {
+                    jarvisAnswerPending = false;
+                    jarvis.onAnswerSpoken();
+                } else insertTranscript(transcript, true);
             }
             @Override public void onState(String state) { updateJarvisLabel(state); }
         });
@@ -244,6 +257,7 @@ public final class OpenCodeWebActivity extends Activity {
         menu.setContentDescription(getString(R.string.oc_controls));
         toolbar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(44)));
         menu.setOnClickListener(this::controls);
+        toolbar.setVisibility(View.GONE);
         root.addView(toolbar);
         FrameLayout body = new FrameLayout(this);
         web = new WebView(this);
@@ -321,8 +335,29 @@ public final class OpenCodeWebActivity extends Activity {
         terminal.setOnClickListener(v -> terminal());
         loading.addView(terminal);
         body.addView(loading, new FrameLayout.LayoutParams(-1, -1));
+        dashboard = new JarvisDashboard(this, new JarvisDashboard.Actions() {
+            @Override public void toggleListening() {
+                if (speech != null) speech.stop();
+                jarvis.toggle();
+                autoNarrate = jarvis.isActive();
+                handler.removeCallbacks(narrationPoll);
+                if (autoNarrate) handler.post(narrationPoll);
+                updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+            }
+            @Override public void openConsole() { toggleEngineConsole(); }
+            @Override public void openSettings() {
+                try { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
+                catch (Exception e) { dashboard.addEvent("Android settings unavailable."); }
+            }
+            @Override public void stopSpeaking() {
+                if (speech != null) speech.stop();
+                if (jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+            }
+        });
+        body.addView(dashboard, new FrameLayout.LayoutParams(-1, -1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
+        dashboard.setState("initializing");
         try (InputStream input = getAssets().open("web-ui/manifest.json")) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buffer = new byte[8192]; int count;
@@ -336,6 +371,38 @@ public final class OpenCodeWebActivity extends Activity {
         }
         startedAt = System.currentTimeMillis();
         TermuxInstaller.setupBootstrapIfNeeded(this, () -> { bootstrapped = true; begin(); offerBackgroundAccess(); });
+    }
+
+    private boolean handleNativeAssistantAction(String request) {
+        String command = request.toLowerCase(Locale.ROOT).trim();
+        try {
+            Intent intent = null;
+            String confirmation = null;
+            if (command.equals("open settings") || command.equals("phone settings")) {
+                intent = new Intent(android.provider.Settings.ACTION_SETTINGS);
+                confirmation = "Opening phone settings.";
+            } else if (command.equals("open camera") || command.equals("launch camera")) {
+                intent = new Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
+                confirmation = "Opening the camera.";
+            } else if (command.equals("open dialer") || command.equals("open phone")) {
+                intent = new Intent(Intent.ACTION_DIAL);
+                confirmation = "Opening the dialer.";
+            } else if (command.equals("open browser")) {
+                intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"));
+                confirmation = "Opening the browser.";
+            } else if (command.equals("set alarm") || command.equals("open alarms")) {
+                intent = new Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS);
+                confirmation = "Opening alarms.";
+            }
+            if (intent == null) return false;
+            startActivity(intent);
+            if (dashboard != null) dashboard.addEvent("ANDROID ACTION  •  " + confirmation);
+            if (speech != null) speech.speak(confirmation, TextToSpeech.QUEUE_FLUSH, null, "jarvis-native");
+            return true;
+        } catch (Exception e) {
+            if (dashboard != null) dashboard.addEvent("ANDROID ACTION  •  Unable to open requested app.");
+            return true;
+        }
     }
 
     private void begin() {
