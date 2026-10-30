@@ -1,30 +1,28 @@
-# Jarvis Assistant — voice-first Android prototype
+# Jarvis Android — amber assistant development branch
 
-This development branch changes the app's main interface from an OpenCode chat screen to a native Jarvis dashboard. The existing OpenCode web interface runs behind the dashboard and is accessible through **ENGINE** for configuration and recovery. It is no longer the primary home screen.
+## Product
+This is intended to be an action-first personal assistant, not a general question-and-answer chatbot. The home screen is a **native amber/orange reactor HUD**, with state indicators, a tappable activation core and a real operation timeline. OpenCode is intended to stay under the surface as the planning, reasoning and tool engine. The conventional OpenCode interface is retained under ENGINE only for configuration and diagnostics.
 
-## Implemented in this branch
-- Native dark blue/cyan Jarvis dashboard with assistant core, status states, and operation timeline.
-- Big ACTIVATE VOICE control and tappable core, no main-screen text composer.
-- Android SpeechRecognizer voice input, native Google TTS output, limited listen/speak cycle.
-- Native Android intents for exact commands: open settings, camera, dialer, browser, alarms.
-- Status and activity events displayed on the dashboard.
-- App display name changed to **Jarvis Assistant**.
-- Separate development branch and GitHub Actions workflow trigger.
+## Implemented code (NOT device verified)
+- Orange/amber charcoal JarvisDashboard with segmented reactor rings, activity/operations console and listening/working/speaking status.
+- Foreground speech transcription via Android SpeechRecognizer and responses via Android TextToSpeech.
+- JarvisActionRouter for real system intents: camera, settings, dialer, maps/navigation, browser, web search, SMS draft, and alarm creation/review.
+- Voice controls and Android permissions.
+- Separate feature branch with GitHub Actions enabled.
 
-## Not yet a fully functioning Jarvis assistant
-- OpenCode actions are still submitted through best-effort DOM interaction with the hidden OpenCode web UI. This is *not* reliable API-level tool execution. The assistant can remain waiting if the DOM submission or reply detection fails.
-- TTS narration still polls HTML text rather than tracking verified OpenCode session completion.
-- No wake-word recognizer, independent action planning/execution framework, long-term memories, reminders/notification APIs, phone control beyond the five explicit intents, or screen-off voice.
-- SpeechRecognizer requires a supported Android service and foreground recording. Voice is stopped when the activity pauses.
-- Do not merge until GitHub Actions compilation and on-device validation are successful.
-- App's *display name* is now Jarvis Assistant, but Android **package remains com.termux**, because hard-coded native Termux bootstrap prefix and executable paths must be rebuilt and migrated before a safe package rename. Changing applicationId by itself will break runtime.
+## Remaining gaps before it behaves like Jarvis
+- **Not autonomous yet**: the OpenCode fallback still injects text into a hidden WebView composer. It can answer text but does not yet plan and execute multi-step personal tasks through a native tool/action architecture.
+- Migrate to OpenCode's authenticated session API, tool-call events and verified completion; remove DOM scraping and composer injection.
+- Implement an agent action registry and task planner that understands goals, asks for missing information only when needed, executes, verifies outcomes and resumes.
+- Interruptible streaming voice, true audio focus, echo cancellation, turn detection and optional wake-word engine.
+- Confirmed Android capability registry: reminders/notifications/calendar, contacts (with permission), applications, files, connectivity control, etc. Use appropriate scoped permissions and Android system restrictions.
+- Persistent user-controlled memory, task state and recovery, user preferences.
+- Screen-off listening is not supported by the current foreground UI controller; Android background microphone permissions/restrictions must be handled separately.
+- Application display name is Jarvis Assistant but **package ID is still com.termux**; native bootstrap hardcodes its filesystem prefix. A safe unique ID requires recompilation/migration of that runtime and provider authorities.
+- This branch has not been compiled or tested on a device from this chat. Do not claim finished APK or merge into main yet.
 
-## Required architecture for a complete personal agent
-1. A native assistant session/state machine using OpenCode's authenticated APIs: agent prompt, event stream, progress, tool invocation, completion, cancellation.
-2. Action registry with Android platform capabilities, runtime permissions, explicit confirmation for consequential actions, execution evidence, and recoverable failures.
-3. Wake-word and VAD with proper echo-cancellation/audio-focus handling; background service subject to Android microphone restrictions.
-4. Durable, user-controlled memory (local encrypted summaries with export/cloud synchronization optionally).
-5. Rebuild bundled bootstrap/native executable assumptions to use a unique package name, migrate service/provider authorities and paths, then verify installation independence.
-6. Automated build validation, device tests, and power/performance profiling.
+## Usage and testing
+Switch to branch `feature/jarvis-assistant-v1` on GitHub Actions and build an experimental APK. Back up any existing Termux/OpenCode data, because the application currently shares the `com.termux` ID and a fresh CI signing key won't update older installs. Use only a sandbox device until runtime, UI and security checks pass.
 
-This document is a statement of implementation status, not a claim of a completed Jarvis product.
+## Security
+No personal GitHub access token is required in source files. Any token previously posted in chat should be revoked, and a new token (if needed) stored only through provider-approved credentials management.
