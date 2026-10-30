@@ -157,50 +157,191 @@ final class JarvisDashboard extends FrameLayout {
 
     private int dp(int v) { return (int)(getResources().getDisplayMetrics().density * v + 0.5f); }
 
+    /**
+     * Original, animated holographic HUD rendered with Android Canvas.
+     * No pre-rendered GIF or network dependency: every element responds to mode.
+     */
     static final class Orb extends View {
-        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        String mode = "off";
-        Orb(Context context) { super(context); setLayerType(View.LAYER_TYPE_SOFTWARE, null); }
-        void setMode(String value) { mode = value; invalidate(); }
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint glow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final float[] noise = new float[72];
+        private String mode = "standby";
+        private long startMillis;
+        private boolean running;
+        private static final int AMBER = Color.rgb(255, 160, 45);
+        private static final int LIGHT = Color.rgb(255, 214, 130);
+        private static final int RED = Color.rgb(255, 95, 46);
+
+        Orb(Context context) {
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+            setContentDescription("Animated Jarvis core. Tap to activate or stop a voice session.");
+            java.util.Random seeded = new java.util.Random(4407);
+            for (int i = 0; i < noise.length; i++) noise[i] = 0.25f + seeded.nextFloat() * 0.75f;
+        }
+
+        void setMode(String value) {
+            mode = value == null ? "standby" : value;
+            invalidate();
+        }
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            startMillis = android.os.SystemClock.uptimeMillis();
+            running = true;
+            postInvalidateDelayed(33);
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            running = false;
+            super.onDetachedFromWindow();
+        }
+
+        @Override protected void onVisibilityChanged(View changed, int visibility) {
+            super.onVisibilityChanged(changed, visibility);
+            running = getVisibility() == VISIBLE && isAttachedToWindow();
+            if (running) postInvalidateDelayed(33);
+        }
+
+        private void stroke(int color, float width, int alpha) {
+            p.reset();
+            p.setAntiAlias(true);
+            p.setStyle(Paint.Style.STROKE);
+            p.setStrokeCap(Paint.Cap.ROUND);
+            p.setColor(color);
+            p.setAlpha(alpha);
+            p.setStrokeWidth(width);
+        }
+
+        private void filled(int color, int alpha) {
+            p.reset();
+            p.setAntiAlias(true);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(color);
+            p.setAlpha(alpha);
+        }
+
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            float cx = getWidth()/2f, cy=getHeight()/2f;
-            float radius = Math.min(cx,cy)*0.67f;
-            int primary = "hearing".equals(mode) || "listening".equals(mode) ? Color.rgb(255,190,65)
-                : "thinking".equals(mode) ? Color.rgb(255,107,30) : Color.rgb(255,145,34);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(new RadialGradient(cx,cy,radius*1.5f,
-                new int[]{0xAA9C3B0C,0x557C360F,0x00000000},null,Shader.TileMode.CLAMP));
-            canvas.drawCircle(cx,cy,radius*1.5f,paint);
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setColor(primary);
-            paint.setStrokeWidth(dpStatic(2));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            for(int i=0;i<4;i++) {
-                paint.setAlpha(215-i*43);
-                canvas.drawCircle(cx,cy,radius*(0.72f+i*0.14f),paint);
+            float width = getWidth(), height = getHeight();
+            float cx = width * .5f, cy = height * .5f;
+            float r = Math.min(width, height) * .38f;
+            if (r <= 0) return;
+            float t = (android.os.SystemClock.uptimeMillis() - startMillis) / 1000f;
+            boolean listening = "listening".equals(mode) || "hearing".equals(mode);
+            boolean working = "thinking".equals(mode) || "transcribing".equals(mode);
+            boolean speaking = "speaking".equals(mode);
+            int main = working ? RED : AMBER;
+            float activity = listening ? 1f : working ? .82f : speaking ? .67f : .35f;
+            float breath = .5f + .5f * (float)Math.sin(t * (listening ? 5.4f : 2.2f));
+
+            // Atmospheric bloom stays strictly inside this view.
+            filled(main, 255);
+            p.setShader(new RadialGradient(cx, cy, r * 1.51f,
+                    new int[]{0x335D2C0F, 0x19763C12, 0x00110B08}, null,
+                    Shader.TileMode.CLAMP));
+            canvas.drawCircle(cx, cy, r * 1.51f, p);
+            p.setShader(null);
+
+            // Concentric scaffolding: fixed precision rings with measured divisions.
+            for (int ring = 0; ring < 5; ring++) {
+                float rr = r * (.57f + ring * .165f);
+                stroke(main, ring == 1 ? 1.9f : .9f, ring % 2 == 0 ? 85 : 130);
+                canvas.drawCircle(cx, cy, rr, p);
             }
-            paint.setAlpha(255);
-            paint.setShader(null);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(dpStatic(3));
-            for (int i=0; i<12; i++) {
-                float start=i*30f-88f;
-                canvas.drawArc(cx-radius*1.10f, cy-radius*1.10f, cx+radius*1.10f, cy+radius*1.10f,
-                    start, 17, false, paint);
+            stroke(LIGHT, 1f, 85);
+            canvas.drawCircle(cx, cy, r * 1.29f, p);
+
+            // Opposed segmented disks rotate on independent bearings.
+            canvas.save();
+            canvas.rotate(t * (working ? 64f : 17f), cx, cy);
+            for (int i = 0; i < 24; i++) {
+                float begin = i * 15f - 90f;
+                stroke((i % 6 == 0) ? LIGHT : main, i % 4 == 0 ? 5.4f : 2.3f,
+                        i % 6 == 0 ? 240 : 120);
+                canvas.drawArc(cx - r * 1.14f, cy - r * 1.14f,
+                        cx + r * 1.14f, cy + r * 1.14f, begin, 8.4f, false, p);
             }
-            paint.setStyle(Paint.Style.FILL);
-            paint.setShader(new RadialGradient(cx,cy,radius*0.74f,
-                new int[]{0xFFFFD27E,primary,0xFF522007},null,Shader.TileMode.CLAMP));
-            canvas.drawCircle(cx,cy,radius*0.72f,paint);
-            paint.setShader(null);
-            paint.setTextAlign(Paint.Align.CENTER);
-            paint.setColor(Color.rgb(74, 29, 10));
-            paint.setTextSize(radius*0.33f);
-            paint.setTypeface(android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.BOLD));
-            canvas.drawText("J",cx,cy+radius*0.12f,paint);
+            canvas.restore();
+
+            canvas.save();
+            canvas.rotate(-t * (listening ? 33f : 11f), cx, cy);
+            for (int i = 0; i < 18; i++) {
+                stroke(main, i % 3 == 0 ? 4.3f : 2f, i % 3 == 0 ? 200 : 115);
+                canvas.drawArc(cx - r * .94f, cy - r * .94f,
+                        cx + r * .94f, cy + r * .94f,
+                        i * 20f - 90f, i % 3 == 0 ? 12f : 7f, false, p);
+            }
+            canvas.restore();
+
+            // 72 radial data bars form a ring. Their lengths fluctuate by assistant state.
+            for (int i = 0; i < noise.length; i++) {
+                float theta = (float) (i * 2 * Math.PI / noise.length);
+                float signal = (.5f + .5f * (float)Math.sin(t * (listening ? 13f : 3.1f)
+                        + i * .64f)) * noise[i];
+                float length = r * (.045f + activity * signal * .18f);
+                float ri = r * 1.22f, ro = ri + length;
+                stroke(main, i % 6 == 0 ? 2.2f : 1.15f,
+                        75 + (int)(120 * signal));
+                canvas.drawLine(cx + (float)Math.cos(theta)*ri,
+                        cy + (float)Math.sin(theta)*ri,
+                        cx + (float)Math.cos(theta)*ro,
+                        cy + (float)Math.sin(theta)*ro, p);
+            }
+
+            // Sweeping inspection beam and opposing curved tracker.
+            canvas.save();
+            canvas.rotate(t * (working ? 92f : 31f), cx, cy);
+            stroke(LIGHT, 4f, 210);
+            canvas.drawArc(cx-r*.74f,cy-r*.74f,cx+r*.74f,cy+r*.74f,
+                    -90, 36, false, p);
+            stroke(main, 1.6f, 150);
+            canvas.drawLine(cx, cy-r*.78f, cx, cy-r*.97f, p);
+            canvas.restore();
+
+            canvas.save();
+            canvas.rotate(-t * 24f, cx, cy);
+            stroke(main, 2.2f, 160);
+            canvas.drawArc(cx-r*.49f,cy-r*.49f,cx+r*.49f,cy+r*.49f,
+                    -45, 100, false, p);
+            canvas.restore();
+
+            // Three nested luminous cores, including a small breathing plasma center.
+            filled(main, 255);
+            p.setShader(new RadialGradient(cx, cy, r * .52f,
+                    new int[]{0x55FFCE82, 0x33FF9A2B, 0x00190F08},
+                    null, Shader.TileMode.CLAMP));
+            canvas.drawCircle(cx, cy, r * .52f, p);
+            p.setShader(null);
+            stroke(LIGHT, 1.7f, 160);
+            canvas.drawCircle(cx, cy, r*.40f, p);
+            stroke(main, 3f, 170);
+            canvas.drawCircle(cx, cy, r*.32f + breath*r*.015f, p);
+            filled(main, 50 + (int)(95*breath));
+            canvas.drawCircle(cx, cy, r * (.23f + .035f*breath), p);
+            filled(LIGHT, 245);
+            canvas.drawCircle(cx,cy,r*.08f, p);
+
+            // Fine registration ticks at the cardinal axes.
+            for (int i=0; i<4; i++) {
+                float a=(float)(Math.PI*i/2);
+                stroke(LIGHT,2,180);
+                canvas.drawLine(cx+(float)Math.cos(a)*r*1.38f,
+                    cy+(float)Math.sin(a)*r*1.38f,
+                    cx+(float)Math.cos(a)*r*1.46f,
+                    cy+(float)Math.sin(a)*r*1.46f,p);
+            }
+
+            // A soft mode glyph follows the real recognition/agent state.
+            filled(LIGHT,220);
+            p.setTextAlign(Paint.Align.CENTER);
+            p.setTypeface(android.graphics.Typeface.create("monospace", android.graphics.Typeface.BOLD));
+            p.setTextSize(r*.085f);
+            canvas.drawText(working ? "PROCESSING" : listening ? "AUDIO LINK" :
+                    speaking ? "VOICE OUT" : "CORE ONLINE",cx,cy+r*.62f,p);
+
+            if (running && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE)
+                postInvalidateDelayed(33); // ~30 FPS; no thread or GL surface
         }
-        private int dpStatic(int x) { return (int)(getResources().getDisplayMetrics().density*x+0.5f); }
     }
 }
