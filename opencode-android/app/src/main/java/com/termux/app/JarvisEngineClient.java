@@ -44,6 +44,13 @@ final class JarvisEngineClient {
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
                 }
                 stage(callback, "executing");
+                String previous = "";
+                try {
+                    previous = latestAssistant(http("GET",
+                        "/api/session/" + Uri.encode(sessionId) + "/message?type=assistant&order=desc&limit=5",
+                        null, 8000));
+                } catch (Exception ignored) { }
+                final String previousAnswer = previous;
                 JSONObject prompt = new JSONObject().put("text", instruction);
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
@@ -59,7 +66,7 @@ final class JarvisEngineClient {
                     if (!text.isEmpty() && text.equals(latest)) stable++; else stable = 0;
                     latest = text;
                     boolean active = isSessionActive();
-                    if (!active && !latest.isEmpty() && stable >= 1) {
+                    if (!active && !latest.isEmpty() && !latest.equals(previousAnswer) && stable >= 1) {
                         String finished = latest;
                         ui.post(() -> callback.onResult(finished));
                         return;
@@ -89,6 +96,10 @@ final class JarvisEngineClient {
 
     private String latestAssistant(JSONObject response) {
         JSONArray arr = response.optJSONArray("data");
+        if (arr == null) {
+            JSONObject data = response.optJSONObject("data");
+            if (data != null) arr = data.optJSONArray("items");
+        }
         if (arr == null) arr = response.optJSONArray("items");
         if (arr == null) arr = response.optJSONArray("messages");
         if (arr == null) return "";
