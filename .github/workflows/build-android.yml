@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt", "feature/jarvis-primary-coordinator", "fix/native-onnx-runtime-pocket-tts", "fix/restore-working-stt"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt", "feature/jarvis-primary-coordinator", "fix/native-onnx-runtime-pocket-tts", "fix/restore-working-stt", "fix/jarvis-full-time-listening-dialogue"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -68,7 +68,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Restored-STT-Pocket-TTS-Universal-APK
+          name: Jarvis-Continuous-Listening-Dialogue-Fix-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
