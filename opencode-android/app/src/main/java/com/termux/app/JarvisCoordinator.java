@@ -68,6 +68,25 @@ final class JarvisCoordinator {
     void onUserSaid(String words) {
         if(!enabled || words==null || words.trim().isEmpty()) return;
         lastUserWords=words.trim();
+        String lower=lastUserWords.toLowerCase(java.util.Locale.ROOT);
+        if(lower.startsWith("/btw ") || lower.equals("/btw") ||
+            lower.matches(".*\\b(progress|status update|how is the task|how is the build|what is the agent doing)\\b.*")) {
+            String question=lower.startsWith("/btw") ?
+                lastUserWords.substring(Math.min(4,lastUserWords.length())).trim() : lastUserWords;
+            if(question.isEmpty()) question="What has the worker actually done so far?";
+            final int ticket=speechEpoch.incrementAndGet();
+            executor.sideQuestion(question,new JarvisEngineClient.Callback() {
+                @Override public void onStage(String stage) {if(enabled)events.onMilestone("Side question: "+stage);}
+                @Override public void onResult(String answer) {
+                    if(enabled && speechEpoch.get()==ticket) events.onSpeech(answer,"jarvis-btw-"+ticket);
+                }
+                @Override public void onError(String error) {
+                    if(enabled && speechEpoch.get()==ticket)
+                        events.onError("Unable to read worker status: "+error);
+                }
+            });
+            return;
+        }
         final String request=lastUserWords;
         final String context="Current project: "+project+". Prior project summary: "+registry.projectSummary(project)+". Active delegated work: "+(activeWork.isEmpty()?"none":activeWork)+
             ". Latest work stage: "+(workStage.isEmpty()?"none":workStage)+". ";
@@ -76,6 +95,7 @@ final class JarvisCoordinator {
             "Reply briefly and naturally with varied human-like wit and warmth when appropriate; "+
             "avoid repetitive phrases, overacting, forced jokes, or claims of completed actions. "+
             "Infer whether the human is chatting, revising ongoing work, or requesting a task. "+
+            "You have access to actual OpenCode workers through the controller. Never say you cannot hear, speak, or use tools when the app is active; report real API or voice errors instead. " +
             "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\",\"mode\":\"new or revise or none\"}. "+
             "Delegate work when it requires tools or sustained actions; keep conversational replies immediate. "+
             "If existing work is running and the human modifies it, delegate a correction or update; "+
