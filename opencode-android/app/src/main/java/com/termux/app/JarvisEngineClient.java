@@ -86,6 +86,17 @@ final class JarvisEngineClient {
                 String system = dialogueOnly ? systemContext : JarvisSpeechStyle.instruction()
                     + "\nAfter attempting actions, give one concise spoken status update.";
                 if(system!=null && !system.trim().isEmpty()) prompt.put("system",system);
+                // Resolve the selected fast model per dialogue request, leaving
+                // delegated work sessions on their independently configured model.
+                if(dialogueOnly) {
+                    String chosen=context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
+                        .getString("model","");
+                    int split=chosen.indexOf('/');
+                    if(split>0 && split<chosen.length()-1)
+                        prompt.put("model",new JSONObject()
+                            .put("providerID",chosen.substring(0,split))
+                            .put("modelID",chosen.substring(split+1)));
+                }
 
                 // Jarvis dialogue must never execute coding tools. Work sessions retain tools.
                 if(dialogueOnly) {
