@@ -22,6 +22,7 @@ final class JarvisCoordinator {
     }
 
     private final JarvisEngineClient dialogue;
+    private final JarvisEngineClient greeter;
     private final JarvisEngineClient executor;
     private final Events events;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -35,6 +36,7 @@ final class JarvisCoordinator {
 
     JarvisCoordinator(Context context, Events events) {
         dialogue = new JarvisEngineClient(context, true);
+        greeter = new JarvisEngineClient(context, true);
         executor = new JarvisEngineClient(context, false);
         this.events=events;
     }
@@ -43,7 +45,7 @@ final class JarvisCoordinator {
         enabled=true;
         // No static welcome lines. The model is responsible for every spoken
         // word; the app merely supplies current context and a speaking event.
-        sayWithDialogue("CONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
+        sayWithGreeter("CONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
             "Do not pretend a task succeeded. No canned introduction. Refer to the current task only if relevant.");
     }
 
@@ -75,10 +77,18 @@ final class JarvisCoordinator {
             "never claim the worker accepted it before confirmation.");
     }
 
+    private void sayWithGreeter(String instruction) {
+        sayWithDialogue(instruction, greeter);
+    }
+
     private void sayWithDialogue(String instruction) {
+        sayWithDialogue(instruction, dialogue);
+    }
+
+    private void sayWithDialogue(String instruction, JarvisEngineClient chosenDialogue) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
-        dialogue.submit(instruction,new JarvisEngineClient.Callback() {
+        chosenDialogue.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
             }
@@ -180,6 +190,7 @@ final class JarvisCoordinator {
     void close() {
         enabled=false;
         dialogue.close();
+        greeter.close();
         executor.close();
     }
 }
