@@ -69,7 +69,7 @@ final class JarvisCoordinator {
             "Reply briefly and naturally with varied human-like wit and warmth when appropriate; "+
             "avoid repetitive phrases, overacting, forced jokes, or claims of completed actions. "+
             "Infer whether the human is chatting, revising ongoing work, or requesting a task. "+
-            "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\"}. "+
+            "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\",\"mode\":\"new or revise or none\"}. "+
             "Delegate work when it requires tools or sustained actions; keep conversational replies immediate. "+
             "If existing work is running and the human modifies it, delegate a correction or update; "+
             "never claim the worker accepted it before confirmation.");
@@ -86,6 +86,7 @@ final class JarvisCoordinator {
                 if(!enabled || ticket!=speechEpoch.get())return;
                 String spoken=response;
                 String delegate="";
+                String mode="new";
                 try {
                     String trimmed=response.trim();
                     int open=trimmed.indexOf('{'),close=trimmed.lastIndexOf('}');
@@ -93,6 +94,7 @@ final class JarvisCoordinator {
                         JSONObject result=new JSONObject(trimmed.substring(open,close+1));
                         spoken=result.optString("say","").trim();
                         delegate=result.optString("delegate","").trim();
+                        mode=result.optString("mode","new").trim();
                     }
                 }catch(Exception ignored) {
                     // A response outside JSON is treated as dialogue only,
@@ -103,10 +105,29 @@ final class JarvisCoordinator {
                     }
                 }
                 if(!spoken.isEmpty()) events.onSpeech(spoken,"jarvis-dialogue-"+ticket);
-                if(!delegate.isEmpty()) delegateWork(delegate);
+                if(!delegate.isEmpty()) {
+                    if("revise".equals(mode) && !activeWork.isEmpty()) reviseWork(delegate);
+                    else delegateWork(delegate);
+                }
             }
             @Override public void onError(String diagnostic) {
                 if(enabled && ticket==speechEpoch.get()) events.onError("Dialogue: "+diagnostic);
+            }
+        });
+    }
+
+    private void reviseWork(String instruction) {
+        events.onMilestone("Sending correction to active subagent");
+        executor.injectCorrection(instruction,new JarvisEngineClient.Callback() {
+            @Override public void onStage(String stage) {
+                activeWork=activeWork+"; latest user correction: "+instruction;
+                events.onMilestone(stage);
+            }
+            @Override public void onResult(String text) { }
+            @Override public void onError(String diagnostic) {
+                events.onError("Work correction: "+diagnostic);
+                sayWithDialogue("Correction could not be admitted to the running worker: "+
+                    diagnostic+". Explain this naturally and clearly; do not say it was applied.");
             }
         });
     }
