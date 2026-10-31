@@ -32,11 +32,17 @@ final class JarvisEngineClient {
         java.util.concurrent.Executors.newSingleThreadExecutor();
     private final boolean dialogueOnly;
     private final String preferredModel;
+    private final JarvisSessionRegistry registry;
+    private final String projectKey;
 
-    JarvisEngineClient(Context context) { this(context, false); }
-    JarvisEngineClient(Context context, boolean dialogueOnly) {
+    JarvisEngineClient(Context context) { this(context, false, "default"); }
+    JarvisEngineClient(Context context, boolean dialogueOnly) { this(context, dialogueOnly, "default"); }
+    JarvisEngineClient(Context context, boolean dialogueOnly, String projectKey) {
         this.context = context.getApplicationContext();
         this.dialogueOnly = dialogueOnly;
+        this.projectKey=projectKey;
+        this.registry=new JarvisSessionRegistry(context);
+        this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
         this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
             .getString("model", "");
     }
@@ -52,6 +58,8 @@ final class JarvisEngineClient {
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
+                    if(dialogueOnly)registry.setDialogueId(sessionId);
+                    else registry.setWorkId(projectKey,sessionId);
                     if (dialogueOnly && !preferredModel.isEmpty()) {
                         int slash=preferredModel.indexOf('/');
                         if (slash<=0 || slash==preferredModel.length()-1)
@@ -254,5 +262,6 @@ final class JarvisEngineClient {
         } finally {conn.disconnect();}
     }
 
+    String sessionId(){return sessionId==null?"":sessionId;}
     void close() { workers.shutdownNow(); corrections.shutdownNow(); }
 }
