@@ -65,6 +65,11 @@ final class JarvisCoordinator {
         speechEpoch.incrementAndGet();
     }
 
+    void onListeningIdle() {
+        if(!enabled)return;
+        sayWithDialogue("The user has been quiet for a while. If appropriate, say one short, natural check-in question. Do not announce listening, status, or technical details. Do not delegate any work.");
+    }
+
     void onUserSaid(String words) {
         if(!enabled || words==null || words.trim().isEmpty()) return;
         lastUserWords=words.trim();
