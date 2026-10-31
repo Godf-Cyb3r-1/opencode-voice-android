@@ -76,6 +76,7 @@ final class JarvisEngineClient {
                     stage(callback, "session expired; recreating dialogue or work session");
                     clearSession();
                     ensureSession(callback);
+                    applyDialogueModel();
                     http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 }
                 stage(callback, "waiting for model response");
