@@ -47,6 +47,7 @@ final class JarvisConversation {
         stt.stop();
         callbacks.onState("off");
     }
+    void pauseDuringSpeech() { if(active) stt.pauseForResponse(); }
     void onAnswerSpoken() {
         awaitingResponse=false;
         if(active){stt.resumeListening();callbacks.onState("listening");}
