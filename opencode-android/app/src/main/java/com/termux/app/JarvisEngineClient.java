@@ -43,7 +43,7 @@ final class JarvisEngineClient {
         this.projectKey=projectKey;
         this.registry=new JarvisSessionRegistry(context);
         this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
-        this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
+        this.preferredModel = context.getSharedPreferences(dialogueOnly ? "jarvis_dialogue" : "jarvis_work", Context.MODE_PRIVATE)
             .getString("model", "");
     }
 
@@ -62,15 +62,7 @@ final class JarvisEngineClient {
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
                     if(dialogueOnly)registry.setDialogueId(sessionId);
                     else registry.setWorkId(projectKey,sessionId);
-                    if (dialogueOnly && !preferredModel.isEmpty()) {
-                        int slash=preferredModel.indexOf('/');
-                        if (slash<=0 || slash==preferredModel.length()-1)
-                            throw new IllegalArgumentException("Fast model must be provider/model");
-                        JSONObject model=new JSONObject().put("providerID",preferredModel.substring(0,slash))
-                            .put("id",preferredModel.substring(slash+1));
-                        http("POST", "/api/session/" + Uri.encode(sessionId) + "/model",
-                            new JSONObject().put("model",model),12000);
-                    }
+
                 }
                 if(sessionId==null || sessionId.trim().isEmpty())
                     throw new IllegalStateException("OpenCode session ID missing; refusing to send prompt");
@@ -87,7 +79,7 @@ final class JarvisEngineClient {
                 String system = dialogueOnly ? systemContext : JarvisSpeechStyle.instruction()
                     + "\nAfter attempting actions, give one concise spoken status update.";
                 if(system!=null && !system.trim().isEmpty()) prompt.put("system",system);
-                if(dialogueOnly && !preferredModel.isEmpty()) {
+                if(!preferredModel.isEmpty()) {
                     int separator=preferredModel.indexOf('/');
                     if(separator>0 && separator<preferredModel.length()-1)
                         prompt.put("model",new JSONObject()
