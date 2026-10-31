@@ -211,14 +211,14 @@ final class JarvisCoordinator {
                 if(enabled) events.onMilestone("Subagent: "+stage);
             }
             @Override public void onResult(String result) {
-                if(revision==workRevision) {
+                if(instruction.equals(projectJobs.get(jobProject))) {
                     projectJobs.remove(jobProject);
                     if(jobProject.equals(project))activeWork="";
                     workStage="completed";
                     registry.updateProject(jobProject,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
                 }
-                if(enabled && revision==workRevision) {
-                    events.onMilestone("Subagent completed");
+                if(enabled) {
+                    events.onMilestone("Project "+jobProject+" completed");
                     sayWithDialogue("WORKER RESULT. Speak directly to the human, honestly and briefly. "+
                         "Mention the result, important limitation and one useful next step. "+
                         "Never read raw logs or reasoning. Result: "+result);
@@ -226,7 +226,7 @@ final class JarvisCoordinator {
             }
             @Override public void onError(String diagnostic) {
                 workStage="error";
-                if(enabled && revision==workRevision) {
+                if(enabled) {
                     projectJobs.remove(jobProject);
                     if(jobProject.equals(project))activeWork="";
                     events.onError("Subagent: "+diagnostic);
