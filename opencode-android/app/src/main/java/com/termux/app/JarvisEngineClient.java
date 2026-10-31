@@ -54,7 +54,7 @@ final class JarvisEngineClient {
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
                 if (sessionId == null) {
-                    JSONObject create = new JSONObject();
+                    JSONObject create = new JSONObject().put("messages", new JSONArray());
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
@@ -78,7 +78,7 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = textPrompt(
+                JSONObject prompt = new JSONObject().put("text",
                     dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
@@ -161,10 +161,6 @@ final class JarvisEngineClient {
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
-    }
-
-    private static JSONObject textPrompt(String text) throws Exception {
-        return new JSONObject().put("parts", new JSONArray().put(new JSONObject().put("type", "text").put("text", text)));
     }
 
     private void stage(Callback callback, String stage) {
