@@ -226,7 +226,11 @@ final class JarvisEngineClient {
                     out.write(buf,0,n);
                 }
                 String data=out.toString("UTF-8").trim();
-                return data.isEmpty()?new JSONObject():new JSONObject(data);
+                if (data.isEmpty()) return new JSONObject();
+                Object parsed = new org.json.JSONTokener(data).nextValue();
+                if (parsed instanceof JSONObject) return (JSONObject) parsed;
+                if (parsed instanceof JSONArray) return new JSONObject().put("data", parsed);
+                throw new IllegalStateException("Unexpected OpenCode API response type");
             }
         } finally {conn.disconnect();}
     }
