@@ -20,6 +20,7 @@ final class JarvisAndroidStt implements RecognitionListener {
     interface Events {
         void onState(String state);
         void onPartial(String text);
+        void onFinal(String text);
         void onFailure(String error);
     }
     private final Activity activity;
@@ -63,6 +64,8 @@ final class JarvisAndroidStt implements RecognitionListener {
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,language);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,language);
         intent.putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE,false);
+        // This recognizer is kept for accuracy; system-service listen beeps are
+        // controlled by the installed speech provider, not by application audio.
         recognizer.startListening(intent);
         events.onState("listening");
     }
@@ -87,7 +90,7 @@ final class JarvisAndroidStt implements RecognitionListener {
            error==SpeechRecognizer.ERROR_CLIENT){events.onFailure("Recognition error "+error);}
         restart();
     }
-    @Override public void onResults(Bundle results){String t=best(results);if(!t.isEmpty())events.onPartial(t);restart();}
+    @Override public void onResults(Bundle results){String t=best(results);if(!t.isEmpty())events.onFinal(t);restart();}
     @Override public void onPartialResults(Bundle partialResults){String t=best(partialResults);if(!t.isEmpty())events.onPartial(t);}
     @Override public void onEvent(int eventType,Bundle params){}
     void close(){
