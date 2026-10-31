@@ -23,7 +23,10 @@ final class JarvisCoordinator {
 
     private final JarvisEngineClient dialogue;
     private final JarvisEngineClient greeter;
-    private final JarvisEngineClient executor;
+    private JarvisEngineClient executor;
+    private final Context context;
+    private final JarvisSessionRegistry registry;
+    private String project;
     private final Events events;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final AtomicInteger speechEpoch = new AtomicInteger();
@@ -35,9 +38,12 @@ final class JarvisCoordinator {
     private volatile String lastUserWords = "";
 
     JarvisCoordinator(Context context, Events events) {
+        this.context=context.getApplicationContext();
+        registry=new JarvisSessionRegistry(context);
+        project=registry.currentProject();
+        if(project.isEmpty())project="general-work";
         dialogue = new JarvisEngineClient(context, true);
-        greeter = new JarvisEngineClient(context, true);
-        executor = new JarvisEngineClient(context, false);
+        executor = new JarvisEngineClient(context, false,project);
         this.events=events;
     }
 
@@ -45,7 +51,7 @@ final class JarvisCoordinator {
         enabled=true;
         // No static welcome lines. The model is responsible for every spoken
         // word; the app merely supplies current context and a speaking event.
-        sayWithGreeter("CONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
+        sayWithDialogue("CONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
             "Do not pretend a task succeeded. No canned introduction. Refer to the current task only if relevant.");
     }
 
@@ -64,7 +70,7 @@ final class JarvisCoordinator {
         if(!enabled || words==null || words.trim().isEmpty()) return;
         lastUserWords=words.trim();
         final String request=lastUserWords;
-        final String context="Active delegated work: "+(activeWork.isEmpty()?"none":activeWork)+
+        final String context="Current project: "+project+". Prior project summary: "+registry.projectSummary(project)+". Active delegated work: "+(activeWork.isEmpty()?"none":activeWork)+
             ". Latest work stage: "+(workStage.isEmpty()?"none":workStage)+". ";
         sayWithDialogue("HUMAN SAID: "+request+"\n"+context+"\n"+
             "You are Jarvis, a natural conversational coordinator, not a coding chatbot. "+
@@ -75,10 +81,6 @@ final class JarvisCoordinator {
             "Delegate work when it requires tools or sustained actions; keep conversational replies immediate. "+
             "If existing work is running and the human modifies it, delegate a correction or update; "+
             "never claim the worker accepted it before confirmation.");
-    }
-
-    private void sayWithGreeter(String instruction) {
-        sayWithDialogue(instruction, greeter);
     }
 
     private void sayWithDialogue(String instruction) {
@@ -97,6 +99,7 @@ final class JarvisCoordinator {
                 String spoken=response;
                 String delegate="";
                 String mode="new";
+                String selectedProject="";
                 try {
                     String trimmed=response.trim();
                     int open=trimmed.indexOf('{'),close=trimmed.lastIndexOf('}');
@@ -105,6 +108,7 @@ final class JarvisCoordinator {
                         spoken=result.optString("say","").trim();
                         delegate=result.optString("delegate","").trim();
                         mode=result.optString("mode","new").trim();
+                        selectedProject=result.optString("project","").trim();
                     }
                 }catch(Exception ignored) {
                     // A response outside JSON is treated as dialogue only,
@@ -116,6 +120,7 @@ final class JarvisCoordinator {
                 }
                 if(!spoken.isEmpty()) events.onSpeech(spoken,"jarvis-dialogue-"+ticket);
                 if(!delegate.isEmpty()) {
+                    if(!selectedProject.isEmpty() && !selectedProject.equalsIgnoreCase(project)) selectProject(selectedProject);
                     if("revise".equals(mode) && !activeWork.isEmpty()) reviseWork(delegate);
                     else delegateWork(delegate);
                 }
@@ -124,6 +129,19 @@ final class JarvisCoordinator {
                 if(enabled) events.onError("Dialogue request "+ticket+": "+diagnostic);
             }
         });
+    }
+
+    private synchronized void selectProject(String name) {
+        if(name.equalsIgnoreCase(project))return;
+        if(!activeWork.isEmpty()) {
+            events.onError("Cannot switch work project while current task is running; finish or stop it first");
+            return;
+        }
+        executor.close();
+        project=name;
+        registry.setCurrentProject(project);
+        executor=new JarvisEngineClient(context,false,project);
+        events.onMilestone("Resumed project: "+project);
     }
 
     private void reviseWork(String instruction) {
@@ -145,6 +163,7 @@ final class JarvisCoordinator {
     private void delegateWork(String instruction) {
         if(!enabled)return;
         activeWork=instruction;
+        registry.updateProject(project,instruction);
         final int revision=++workRevision;
         events.onMilestone("Subagent accepted task");
         // Announce real progress only if a delegated task is still running
@@ -168,6 +187,7 @@ final class JarvisCoordinator {
                 if(revision==workRevision) {
                     activeWork="";
                     workStage="completed";
+                    registry.updateProject(project,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
                 }
                 if(enabled) {
                     events.onMilestone("Subagent completed");
@@ -190,7 +210,6 @@ final class JarvisCoordinator {
     void close() {
         enabled=false;
         dialogue.close();
-        greeter.close();
         executor.close();
     }
 }
