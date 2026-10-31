@@ -225,19 +225,20 @@ final class JarvisStreamingStt {
                 long quiet=now-lastSpeech;
                 long textIdle=lastTextChange==0L?0L:now-lastTextChange;
                 boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                boolean meaningful=partial.split("\\s+").length>=2;
+                boolean meaningful=partial.split("\\s+").length>=2 || partial.matches("(?i)^(hello|jarvis|status|stop|pause|resume|continue|yes|no|okay)[.!?]?$");
                 // Avoid promoting random decoded noise to a user command.
                 // Speech energy must have been present for multiple frames.
-                boolean speechObserved=activeFrames>=3 || now-lastSpeech<2500 && lastSpeech>0;
-                boolean nativeEndpoint=recognizer.isEndpoint(stream);
+                boolean speechObserved=hasSpeech && startedUtterance>0L;
+                // Native endpoint is advisory only; dialogue turn control uses silence and text stability.
                 // Stop waiting forever when microphone noise keeps the crude
                 // energy detector active. Require stable recognized text too.
-                long quietLimit=incomplete?2800:1400;
-                long stuckLimit=incomplete?5500:2500;
-                boolean endOfTurn=meaningful && speechObserved && stable>=3 &&
-                    (nativeEndpoint && textIdle>=350 ||
-                     quiet>=quietLimit && textIdle>=650 ||
-                     textIdle>=stuckLimit);
+                long quietLimit=incomplete?4200:2500;
+                long stuckLimit=incomplete?6500:4200;
+                // Ignore premature acoustic endpoints. A short pause after
+                // "I want to build a website" is not an instruction boundary.
+                boolean endOfTurn=meaningful && speechObserved && stable>=5 &&
+                    (quiet>=quietLimit && textIdle>=1600 ||
+                     textIdle>=stuckLimit && quiet>=900);
                 if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
                     // Immediately reset the utterance, keeping the microphone

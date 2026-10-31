@@ -84,7 +84,7 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(state, new LinearLayout.LayoutParams(-1, dp(40)));
 
         TextView hint = new TextView(context);
-        hint.setText("Jarvis speaks first. Type replies below; microphone is off.");
+        hint.setText("Speak naturally. Jarvis waits for a complete request before acting.");
         hint.setGravity(Gravity.CENTER);
         hint.setTextColor(Color.rgb(194, 159, 130));
         hint.setTextSize(12);
@@ -108,7 +108,7 @@ final class JarvisDashboard extends FrameLayout {
         composer.setTextSize(14);
         composer.setTextColor(Color.WHITE);
         composer.setHintTextColor(Color.rgb(177, 142, 111));
-        composer.setHint("Type to Jarvis — speech recognition disabled");
+        composer.setHint("Speak to Jarvis or type a message");
         composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         composer.setImeOptions(EditorInfo.IME_ACTION_SEND);
         composer.setOnEditorActionListener((v, action, event) -> {
