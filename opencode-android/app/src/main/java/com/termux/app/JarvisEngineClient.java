@@ -28,8 +28,16 @@ final class JarvisEngineClient {
     private final java.util.concurrent.ExecutorService workers =
         java.util.concurrent.Executors.newSingleThreadExecutor();
     private String sessionId;
+    private final boolean dialogueOnly;
+    private final String preferredModel;
 
-    JarvisEngineClient(Context context) { this.context = context.getApplicationContext(); }
+    JarvisEngineClient(Context context) { this(context, false); }
+    JarvisEngineClient(Context context, boolean dialogueOnly) {
+        this.context = context.getApplicationContext();
+        this.dialogueOnly = dialogueOnly;
+        this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
+            .getString("model", "");
+    }
 
     void submit(String instruction, Callback callback) {
         workers.execute(() -> {
@@ -52,9 +60,11 @@ final class JarvisEngineClient {
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
                 JSONObject prompt = new JSONObject().put("text",
-                    JarvisSpeechStyle.instruction()
+                    dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
-                    + "\\n\\nAfter attempting actions, give one concise spoken status update.");
+                    + "\n\nAfter attempting actions, give one concise spoken status update.");
+                if (dialogueOnly && !preferredModel.isEmpty()) prompt.put("model", preferredModel);
+                if (dialogueOnly) prompt.put("agent", "jarvis-dialogue");
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
                 String latest = "";
