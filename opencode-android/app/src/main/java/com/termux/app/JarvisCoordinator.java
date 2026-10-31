@@ -23,6 +23,8 @@ final class JarvisCoordinator {
 
     private final JarvisEngineClient dialogue;
     private JarvisEngineClient executor;
+    private final java.util.Map<String,JarvisEngineClient> projectWorkers = new java.util.HashMap<>();
+    private final java.util.Map<String,String> projectJobs = new java.util.HashMap<>();
     private final Context context;
     private final JarvisSessionRegistry registry;
     private String project;
@@ -43,6 +45,7 @@ final class JarvisCoordinator {
         if(project.isEmpty())project="general-work";
         dialogue = new JarvisEngineClient(context, true);
         executor = new JarvisEngineClient(context, false,project);
+        projectWorkers.put(project,executor);
         this.events=events;
     }
 
@@ -151,16 +154,18 @@ final class JarvisCoordinator {
     }
 
     private synchronized void selectProject(String name) {
-        if(name.equalsIgnoreCase(project))return;
-        if(!activeWork.isEmpty()) {
-            events.onError("Cannot switch work project while current task is running; finish or stop it first");
-            return;
-        }
-        executor.close();
-        project=name;
+        if(name==null || name.trim().isEmpty() || name.equalsIgnoreCase(project)) return;
+        // Switching the active project never closes an executing worker session.
+        project=name.trim();
         registry.setCurrentProject(project);
-        executor=new JarvisEngineClient(context,false,project);
-        events.onMilestone("Resumed project: "+project);
+        JarvisEngineClient existing=projectWorkers.get(project);
+        if(existing==null) {
+            existing=new JarvisEngineClient(context,false,project);
+            projectWorkers.put(project,existing);
+        }
+        executor=existing;
+        activeWork=projectJobs.containsKey(project)?projectJobs.get(project):"";
+        events.onMilestone("Selected project: "+project);
     }
 
     private void reviseWork(String instruction) {
@@ -182,7 +187,10 @@ final class JarvisCoordinator {
     private void delegateWork(String instruction) {
         if(!enabled)return;
         activeWork=instruction;
-        registry.updateProject(project,instruction);
+        final String jobProject=project;
+        final JarvisEngineClient jobWorker=executor;
+        projectJobs.put(jobProject,instruction);
+        registry.updateProject(jobProject,instruction);
         final int revision=++workRevision;
         events.onMilestone("Submitting task to OpenCode worker");
         // Announce real progress only if a delegated task is still running
@@ -197,16 +205,17 @@ final class JarvisCoordinator {
                     "Do not claim work has finished. Use your own fresh wording; avoid repetitive status phrases.");
             }
         }, 12000L);
-        executor.submit(instruction,new JarvisEngineClient.Callback() {
+        jobWorker.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 workStage=stage;
                 if(enabled) events.onMilestone("Subagent: "+stage);
             }
             @Override public void onResult(String result) {
                 if(revision==workRevision) {
-                    activeWork="";
+                    projectJobs.remove(jobProject);
+                    if(jobProject.equals(project))activeWork="";
                     workStage="completed";
-                    registry.updateProject(project,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
+                    registry.updateProject(jobProject,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
                 }
                 if(enabled && revision==workRevision) {
                     events.onMilestone("Subagent completed");
@@ -218,7 +227,8 @@ final class JarvisCoordinator {
             @Override public void onError(String diagnostic) {
                 workStage="error";
                 if(enabled && revision==workRevision) {
-                    activeWork="";
+                    projectJobs.remove(jobProject);
+                    if(jobProject.equals(project))activeWork="";
                     events.onError("Subagent: "+diagnostic);
                     sayWithDialogue("A delegated task failed: "+diagnostic+
                         ". Explain the failure briefly and naturally, without claiming success.");
@@ -230,6 +240,7 @@ final class JarvisCoordinator {
     void close() {
         enabled=false;
         dialogue.close();
-        executor.close();
+        for(JarvisEngineClient worker:projectWorkers.values())worker.close();
+        projectWorkers.clear();
     }
 }
