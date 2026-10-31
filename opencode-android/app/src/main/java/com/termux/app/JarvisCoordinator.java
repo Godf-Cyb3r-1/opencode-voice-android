@@ -202,6 +202,7 @@ final class JarvisCoordinator {
                 }
             }
             @Override public void onError(String diagnostic) {
+                if(revision==workRevision)activeWork="";
                 workStage="error";
                 if(enabled) {
                     events.onError("Subagent: "+diagnostic);
