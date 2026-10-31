@@ -50,8 +50,11 @@ final class JarvisCoordinator {
         enabled=true;
         // No static welcome lines. The model is responsible for every spoken
         // word; the app merely supplies current context and a speaking event.
-        sayWithDialogue("CONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
-            "Do not pretend a task succeeded. No canned introduction. Refer to the current task only if relevant.");
+        final int activation=speechEpoch.incrementAndGet();
+        ui.postDelayed(() -> {
+            if(enabled && speechEpoch.get()==activation)
+                sayWithDialogue("Begin a natural brief greeting.");
+        },1800L);
     }
 
     void deactivate() {
@@ -84,8 +87,15 @@ final class JarvisCoordinator {
     private void sayWithDialogue(String instruction, String context) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
-        String system="You are Jarvis. Respond naturally and briefly. Return JSON keys say, delegate, mode, project. "+
-            "For ordinary chat delegate must be empty. Use tools only in separate work sessions. "+context;
+        String system="You are Jarvis, an attentive and capable personal operations controller. "+
+            "Speak to the user as a person, not a chatbot or technical log. Never say you cannot hear, "+
+            "speak or listen unless a real device error occurred. Do not narrate internal actions. "+
+            "You cannot personally execute development tools in this dialogue session: delegate real work "+
+            "to an independent OpenCode work session. A side question never cancels active development. "+
+            "For ordinary talk, answer promptly without deep reasoning or tool use. "+
+            "Return JSON keys say, delegate, mode, project. say is concise natural speech. "+
+            "For ordinary chat delegate is empty and mode is none. For executable work choose mode new; "+
+            "for changes to running work choose revise. Never report that a task has started until confirmed. "+context;
         dialogue.submit(instruction,system,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
@@ -161,7 +171,7 @@ final class JarvisCoordinator {
         activeWork=instruction;
         registry.updateProject(project,instruction);
         final int revision=++workRevision;
-        events.onMilestone("Subagent accepted task");
+        events.onMilestone("ACTION  •  Queued work in project "+project+"; establishing independent OpenCode worker session");
         // Announce real progress only if a delegated task is still running
         // after a meaningful interval. All words are composed by the model.
         ui.postDelayed(() -> {
@@ -177,7 +187,7 @@ final class JarvisCoordinator {
         executor.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 workStage=stage;
-                if(enabled) events.onMilestone("Subagent: "+stage);
+                if(enabled) events.onMilestone("WORKER "+project+"  •  "+stage);
             }
             @Override public void onResult(String result) {
                 if(revision==workRevision) {
@@ -186,7 +196,7 @@ final class JarvisCoordinator {
                     registry.updateProject(project,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
                 }
                 if(enabled) {
-                    events.onMilestone("Subagent completed");
+                    events.onMilestone("ACTION COMPLETED  •  "+project);
                     sayWithDialogue("WORKER RESULT. Speak directly to the human, honestly and briefly. "+
                         "Mention the result, important limitation and one useful next step. "+
                         "Never read raw logs or reasoning. Result: "+result);
