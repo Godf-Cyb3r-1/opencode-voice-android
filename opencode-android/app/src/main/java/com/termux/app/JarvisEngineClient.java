@@ -53,7 +53,7 @@ final class JarvisEngineClient {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
-                if (sessionId == null) {
+                if (sessionId == null || sessionId.trim().isEmpty()) {
                     JSONObject create = new JSONObject().put("messages", new JSONArray());
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
@@ -70,6 +70,8 @@ final class JarvisEngineClient {
                             new JSONObject().put("model",model),12000);
                     }
                 }
+                if(sessionId==null || sessionId.trim().isEmpty())
+                    throw new IllegalStateException("OpenCode session ID missing; refusing to send prompt");
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
