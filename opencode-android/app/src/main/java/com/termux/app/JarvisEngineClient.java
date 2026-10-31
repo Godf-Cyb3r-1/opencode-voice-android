@@ -206,6 +206,8 @@ final class JarvisEngineClient {
         if (messages == null) messages = response.optJSONArray("messages");
         if (messages == null) return "";
 
+        String newestText="";
+        long newestTimestamp=Long.MIN_VALUE;
         for (int i = 0; i < messages.length(); i++) {
             JSONObject envelope = messages.optJSONObject(i);
             if (envelope == null) continue;
@@ -219,7 +221,7 @@ final class JarvisEngineClient {
             JSONArray content = envelope.optJSONArray("content");
             if (content == null) content = info.optJSONArray("content");
             if (content == null) content = envelope.optJSONArray("parts");
-            if (content == null) return "";
+            if (content == null) continue;
 
             StringBuilder spoken = new StringBuilder();
             for (int j = 0; j < content.length(); j++) {
@@ -231,9 +233,16 @@ final class JarvisEngineClient {
                     spoken.append(t);
                 }
             }
-            if(spoken.length()>0)return JarvisSpeechStyle.prepare(spoken.toString());
+            if(spoken.length()>0){
+                JSONObject time=info.optJSONObject("time");
+                long timestamp=time==null?0L:time.optLong("created",0L);
+                if(newestText.isEmpty() || timestamp>newestTimestamp){
+                    newestTimestamp=timestamp;
+                    newestText=spoken.toString();
+                }
+            }
         }
-        return "";
+        return JarvisSpeechStyle.prepare(newestText);
     }
 
     private JSONObject http(String method, String path, JSONObject payload, int timeout) throws Exception {
