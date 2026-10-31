@@ -96,14 +96,15 @@ final class JarvisEngineClient {
                     // The conversational model must not wait on an indefinitely
                     // active OpenCode session. Return stable user-facing text.
                     boolean dialogueReady = dialogueOnly && stable >= 2 &&
-                        android.os.SystemClock.elapsedRealtime() - firstStableAt >= 750L;
+                        android.os.SystemClock.elapsedRealtime() - firstStableAt >= 750L &&
+                        isCompleteDialogueText(latest);
                     if ((dialogueReady || !active) && !latest.isEmpty() && !latest.equals(previousAnswer)) {
                         String finished = latest;
                         ui.post(() -> callback.onResult(finished));
                         return;
                     }
                 }
-                if(dialogueOnly && !latest.isEmpty() && !latest.equals(previousAnswer)) {
+                if(dialogueOnly && isCompleteDialogueText(latest) && !latest.equals(previousAnswer)) {
                     final String response=latest;
                     ui.post(() -> callback.onResult(response));
                     return;
@@ -114,6 +115,22 @@ final class JarvisEngineClient {
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
+    }
+
+    private static boolean isCompleteDialogueText(String text) {
+        if(text==null || text.trim().isEmpty())return false;
+        String candidate=text.trim();
+        if(candidate.startsWith("```")) {
+            if(!candidate.endsWith("```") || candidate.length()<7)return false;
+            candidate=candidate.substring(candidate.indexOf('\n')+1,candidate.length()-3).trim();
+        }
+        if(!candidate.startsWith("{"))return true;
+        try {
+            JSONObject output=new JSONObject(candidate);
+            return output.has("say");
+        }catch(Exception incomplete) {
+            return false; // Do not send partially streamed JSON to TTS.
+        }
     }
 
     void injectCorrection(String correction, Callback callback) {
