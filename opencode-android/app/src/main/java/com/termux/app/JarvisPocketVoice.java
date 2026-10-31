@@ -189,7 +189,10 @@ final class JarvisPocketVoice {
                         try {playAudio(samples,sampleRate,ticket);}
                         finally {audioCapacity.release();}
                     });
-                }catch(Throwable failure){audioCapacity.release();throw failure;}
+                }catch(Throwable failure){
+                    audioCapacity.release();
+                    throw new IllegalStateException("Speech synthesis failed",failure);
+                }
             }
             if(last!=null)last.get();
             if(!closed && ticket==generation.get() && announceStart)
