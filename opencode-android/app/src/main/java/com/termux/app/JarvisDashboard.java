@@ -9,6 +9,8 @@ import android.graphics.Shader;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
+import android.view.inputmethod.EditorInfo;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -21,12 +23,14 @@ final class JarvisDashboard extends FrameLayout {
         void openConsole();
         void openSettings();
         void stopSpeaking();
+        void submitText(String text);
     }
     private final TextView state;
     private final TextView activity;
     private final TextView subtitle;
     private final Orb orb;
     private final Button speakButton;
+    private final EditText composer;
     private final int accent = Color.rgb(255, 156, 42);
     private boolean listening;
 
@@ -80,7 +84,7 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(state, new LinearLayout.LayoutParams(-1, dp(40)));
 
         TextView hint = new TextView(context);
-        hint.setText("Tap the reactor to activate your assistant");
+        hint.setText("Jarvis speaks first. Type replies below; microphone is off.");
         hint.setGravity(Gravity.CENTER);
         hint.setTextColor(Color.rgb(194, 159, 130));
         hint.setTextSize(12);
@@ -95,6 +99,29 @@ final class JarvisDashboard extends FrameLayout {
         buttonParams.topMargin = dp(22);
         stack.addView(speakButton, buttonParams);
         speakButton.setOnClickListener(v -> actions.toggleListening());
+
+        LinearLayout inputRow = new LinearLayout(context);
+        inputRow.setOrientation(LinearLayout.HORIZONTAL);
+        composer = new EditText(context);
+        composer.setSingleLine(false);
+        composer.setMaxLines(3);
+        composer.setTextSize(14);
+        composer.setTextColor(Color.WHITE);
+        composer.setHintTextColor(Color.rgb(177, 142, 111));
+        composer.setHint("Type to Jarvis — speech recognition disabled");
+        composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        composer.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        composer.setOnEditorActionListener((v, action, event) -> {
+            if(action==EditorInfo.IME_ACTION_SEND) {submit(actions);return true;}
+            return false;
+        });
+        inputRow.addView(composer,new LinearLayout.LayoutParams(0,dp(56),1));
+        Button send=utility(context,"SEND");
+        send.setOnClickListener(v -> submit(actions));
+        inputRow.addView(send,new LinearLayout.LayoutParams(dp(78),dp(56)));
+        LinearLayout.LayoutParams inputParams=new LinearLayout.LayoutParams(-1,dp(60));
+        inputParams.topMargin=dp(12);
+        stack.addView(inputRow,inputParams);
 
         TextView timelineTitle = new TextView(context);
         timelineTitle.setText("LIVE OPERATIONS / EXECUTION LOG");
@@ -132,6 +159,13 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(tools, toolsParams);
     }
 
+    private void submit(Actions actions) {
+        String message=composer.getText().toString().trim();
+        if(message.isEmpty())return;
+        composer.setText("");
+        actions.submitText(message);
+    }
+
     private Button utility(Context context, String label) {
         Button button = new Button(context);
         button.setText(label);
@@ -146,7 +180,7 @@ final class JarvisDashboard extends FrameLayout {
         state.setText(s.toUpperCase(java.util.Locale.ROOT));
         listening = "listening".equals(s) || "hearing".equals(s);
         orb.setMode(s);
-        speakButton.setText(listening || "thinking".equals(s) || "transcribing".equals(s) ? "END VOICE SESSION" : "ENGAGE ASSISTANT");
+        speakButton.setText("standby".equals(s) || "off".equals(s) ? "START JARVIS" : "END JARVIS SESSION");
     }
 
     void showLiveTranscript(String transcript) {
