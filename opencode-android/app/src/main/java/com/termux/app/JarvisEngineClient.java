@@ -31,7 +31,7 @@ final class JarvisEngineClient {
     private final java.util.concurrent.ExecutorService corrections =
         java.util.concurrent.Executors.newSingleThreadExecutor();
     private final boolean dialogueOnly;
-    private final String preferredModel;
+    private volatile String appliedModel = "";
     private final JarvisSessionRegistry registry;
     private final String projectKey;
 
@@ -43,8 +43,7 @@ final class JarvisEngineClient {
         this.projectKey=projectKey;
         this.registry=new JarvisSessionRegistry(context);
         this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
-        this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
-            .getString("model", "");
+
     }
 
     void submit(String instruction, Callback callback) {
@@ -54,6 +53,7 @@ final class JarvisEngineClient {
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
                 ensureSession(callback);
+                applyDialogueModel();
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -122,6 +122,7 @@ final class JarvisEngineClient {
     private void clearSession() {
         registry.clearStaleSession(dialogueOnly, projectKey);
         sessionId = "";
+        appliedModel = "";
     }
 
     private void ensureSession(Callback callback) throws Exception {
@@ -148,18 +149,23 @@ final class JarvisEngineClient {
         if (dialogueOnly) registry.setDialogueId(fresh);
         else registry.setWorkId(projectKey, fresh);
         stage(callback, "new OpenCode session ready");
-        // Model should be selected through the session's supported model API
-        // only after validating the provider/model pair.
-        if (dialogueOnly && !preferredModel.isEmpty()) {
-            int slash = preferredModel.indexOf('/');
-            if (slash <= 0 || slash == preferredModel.length()-1)
-                throw new IllegalArgumentException("Fast model must be provider/model");
-            JSONObject model = new JSONObject().put("providerID", preferredModel.substring(0,slash))
-                .put("id", preferredModel.substring(slash+1));
-            http("POST", "/api/session/" + Uri.encode(fresh) + "/model",
-                new JSONObject().put("model", model), 12000);
-        }
     }
+
+    private void applyDialogueModel() throws Exception {
+        if(!dialogueOnly)return;
+        String chosen=context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
+            .getString("model","").trim();
+        if(chosen.isEmpty() || chosen.equals(appliedModel))return;
+        int slash=chosen.indexOf('/');
+        if(slash<=0 || slash==chosen.length()-1)
+            throw new IllegalArgumentException("Fast model must be provider/model");
+        JSONObject model=new JSONObject().put("providerID",chosen.substring(0,slash))
+            .put("id",chosen.substring(slash+1));
+        http("POST","/api/session/"+Uri.encode(sessionId)+"/model",
+            new JSONObject().put("model",model),12000);
+        appliedModel=chosen;
+    }
+
 
     private static boolean isCompleteDialogueText(String text) {
         if(text==null || text.trim().isEmpty())return false;
