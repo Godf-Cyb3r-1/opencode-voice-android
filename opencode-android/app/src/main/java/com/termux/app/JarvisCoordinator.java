@@ -97,6 +97,10 @@ final class JarvisCoordinator {
                 }catch(Exception ignored) {
                     // A response outside JSON is treated as dialogue only,
                     // never forwarded as a potentially executable instruction.
+                    if(response.trim().startsWith("{") || response.trim().startsWith("```")) {
+                        events.onError("Dialogue returned invalid structured speech output");
+                        return;
+                    }
                 }
                 if(!spoken.isEmpty()) events.onSpeech(spoken,"jarvis-dialogue-"+ticket);
                 if(!delegate.isEmpty()) delegateWork(delegate);
