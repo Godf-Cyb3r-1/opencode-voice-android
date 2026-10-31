@@ -255,7 +255,8 @@ public final class OpenCodeWebActivity extends Activity {
             "Preview Jarvis voice",
             "Android fallback TTS engine",
             "Android fallback voice",
-            "Android TTS settings"
+            "Android TTS settings",
+            "Speech recognizer: " + (getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true) ? "Android high accuracy" : "Offline Zipformer")
         };
         new AlertDialog.Builder(this).setTitle("Jarvis • Voice Studio")
             .setItems(options, (dialog, choice) -> {
@@ -273,6 +274,11 @@ public final class OpenCodeWebActivity extends Activity {
                     case 4: if (coordinator != null) coordinator.activate(); break;
                     case 5: chooseTtsEngine(); break;
                     case 6: chooseInstalledVoice(); break;
+                    case 8:
+                        boolean selected=getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true);
+                        getSharedPreferences("jarvis_asr",0).edit().putBoolean("prefer_android",!selected).apply();
+                        if(dashboard!=null)dashboard.addEvent("ASR  •  Switch takes effect after restarting Jarvis listening.");
+                        break;
                     case 7:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
                         catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
