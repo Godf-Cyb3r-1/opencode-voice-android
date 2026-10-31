@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt", "feature/jarvis-primary-coordinator", "fix/native-onnx-runtime-pocket-tts", "fix/restore-working-stt", "fix/jarvis-full-time-listening-dialogue", "fix/stt-quality-dialogue-diagnostics"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt", "feature/jarvis-primary-coordinator", "fix/native-onnx-runtime-pocket-tts", "fix/restore-working-stt", "fix/jarvis-full-time-listening-dialogue", "fix/stt-quality-dialogue-diagnostics", "feature/jarvis-text-first-no-stt"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -68,7 +68,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-STT-Quality-Dialogue-Diagnostics-APK
+          name: Jarvis-Text-First-No-STT-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
