@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt", "feature/jarvis-primary-coordinator", "fix/native-onnx-runtime-pocket-tts", "fix/restore-working-stt", "fix/jarvis-full-time-listening-dialogue", "fix/stt-quality-dialogue-diagnostics", "feature/jarvis-text-first-no-stt", "feature/jarvis-persistent-sessions"]
+    branches: [main, "feature/jarvis-assistant-v1", "feature/kokoro-native-voice", "feature/low-latency-conversation", "fix/voice-final-only-fast", "feature/pocket-tts-reference-voice", "feature/continuous-offline-stt", "fix/stt-stuck-hearing-endpoint", "feature/moonshine-realtime-stt", "feature/jarvis-primary-coordinator", "fix/native-onnx-runtime-pocket-tts", "fix/restore-working-stt", "fix/jarvis-full-time-listening-dialogue", "fix/stt-quality-dialogue-diagnostics", "feature/jarvis-text-first-no-stt", "feature/jarvis-persistent-sessions", "fix/jarvis-background-errors-spoken", "fix/jarvis-dialogue-tool-isolation-ui", "fix/jarvis-native-context-prompts", "feature/jarvis-600ms-microturn", "feature/jarvis-microturn-core-v2", "fix/jarvis-moonshine-stt-quality"]
     paths:
       - 'opencode-android/**'
       - '.github/workflows/build-android.yml'
@@ -44,17 +44,12 @@ jobs:
           test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/test_wavs/bria.wav
           test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/vocab.json
           test -s app/src/main/assets/sherpa-onnx-pocket-tts-int8-2026-01-26/decoder.int8.onnx
-      - name: Prepare previously working Zipformer STT model
-        run: |
-          bash scripts/prepare_streaming_stt.sh
-          test -s app/src/main/assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/tokens.txt
       - name: Build signed debug APK
         run: |
           chmod +x gradlew scripts/build.sh
           TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS=0 bash scripts/build.sh
           for apk in app/build/outputs/apk/debug/*.apk; do
             unzip -Z -1 "$apk" | grep -F "assets/sherpa-onnx-pocket-tts-int8-2026-01-26/lm_main.int8.onnx" >/dev/null || { echo "Pocket TTS model missing from $apk"; exit 1; }
-            unzip -Z -1 "$apk" | grep -F "assets/sherpa-onnx-streaming-zipformer-en-2023-06-26/tokens.txt" >/dev/null || { echo "Offline STT model missing"; exit 1; }
             unzip -p "$apk" lib/arm64-v8a/libonnxruntime.so > /tmp/packaged-onnxruntime.so
             readelf --dyn-syms --wide /tmp/packaged-onnxruntime.so | grep -q 'OrtGetApiBase' || {
               echo "FAIL: packaged ONNX Runtime does not export OrtGetApiBase"; exit 1;
@@ -68,7 +63,7 @@ jobs:
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Persistent-Sessions-APK
+          name: Jarvis-Moonshine-STT-APK
           path: opencode-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14

@@ -47,13 +47,15 @@ final class JarvisEngineClient {
             .getString("model", "");
     }
 
-    void submit(String instruction, Callback callback) {
+    void submit(String instruction, Callback callback) { submit(instruction, null, callback); }
+
+    void submit(String instruction, String systemContext, Callback callback) {
         workers.execute(() -> {
             try {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
-                if (sessionId == null) {
+                if (sessionId == null || sessionId.trim().isEmpty()) {
                     JSONObject create = new JSONObject().put("messages", new JSONArray());
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
@@ -70,6 +72,8 @@ final class JarvisEngineClient {
                             new JSONObject().put("model",model),12000);
                     }
                 }
+                if(sessionId==null || sessionId.trim().isEmpty())
+                    throw new IllegalStateException("OpenCode session ID missing; refusing to send prompt");
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -78,16 +82,22 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text",
-                    dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
-                    + "\n\nTask: " + instruction
-                    + "\n\nAfter attempting actions, give one concise spoken status update.");
+                JSONObject prompt = new JSONObject().put("text",instruction);
+                String system = dialogueOnly ? systemContext : JarvisSpeechStyle.instruction()
+                    + "\nAfter attempting actions, give one concise spoken status update.";
+                if(system!=null && !system.trim().isEmpty()) prompt.put("system",system);
 
-                // Keep dialogue on a separate session without requiring a preinstalled agent name.
+                // Jarvis dialogue must never execute coding tools. Work sessions retain tools.
+                if(dialogueOnly) {
+                    JSONObject disabled=new JSONObject();
+                    for(String tool : new String[]{"bash","read","write","edit","apply_patch","glob","grep","list","webfetch","websearch","task","todowrite","todoread","question","skill"})
+                        disabled.put(tool,false);
+                    prompt.put("tools",disabled);
+                }
                 stage(callback, "sending prompt to OpenCode");
-                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, dialogueOnly?90000:120000);
                 stage(callback, "waiting for model response");
-                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
+                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 45_000L : 120_000L);
                 long firstStableAt = 0L;
                 String latest = "";
                 int stable = 0;
