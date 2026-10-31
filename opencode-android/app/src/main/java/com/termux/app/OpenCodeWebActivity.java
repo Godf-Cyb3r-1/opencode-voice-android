@@ -152,7 +152,7 @@ public final class OpenCodeWebActivity extends Activity {
                     }
                     @Override public void onDone(String id) {
                         handler.post(() -> {
-                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
                             if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
                                 jarvisNarrating = false;
                                 jarvis.onAnswerSpoken();
@@ -476,7 +476,7 @@ public final class OpenCodeWebActivity extends Activity {
             }
             @Override public void completed(String id) {
                 currentNeuralText=null;currentNeuralId=null;
-                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
             }
             @Override public void failed(String id, String reason) {
                 if (dashboard != null) dashboard.addEvent("POCKET TTS ERROR  •  " + reason);
