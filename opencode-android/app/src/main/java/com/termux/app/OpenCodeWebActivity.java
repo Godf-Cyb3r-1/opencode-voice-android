@@ -190,6 +190,7 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     private void speakAssistant(String text, String id) {
+        if ("jarvis-native".equals(id) && jarvis != null) jarvis.pauseDuringSpeech();
         String spoken = JarvisSpeechStyle.prepare(text);
         if (spoken.isEmpty()) return;
         if (preferPocket && pocket != null && !pocketFailed) {
