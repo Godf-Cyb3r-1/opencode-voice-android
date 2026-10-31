@@ -43,7 +43,7 @@ final class JarvisEngineClient {
         this.dialogueOnly = dialogueOnly;
         this.projectKey=projectKey;
         this.registry=new JarvisSessionRegistry(context);
-        this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
+        this.sessionId=dialogueOnly ? registry.dialogueId(projectKey) : registry.workId(projectKey);
 
     }
 
@@ -151,7 +151,7 @@ final class JarvisEngineClient {
         String fresh = created.optString("id", created.optString("sessionID", "")).trim();
         if (fresh.isEmpty()) throw new IllegalStateException("OpenCode did not return a session ID");
         sessionId = fresh;
-        if (dialogueOnly) registry.setDialogueId(fresh);
+        if (dialogueOnly) registry.setDialogueId(projectKey,fresh);
         else registry.setWorkId(projectKey, fresh);
         stage(callback, "new OpenCode session ready");
     }
