@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.audiofx.AcousticEchoCanceler;
 import android.media.MediaRecorder;
 import android.os.Handler;
 import android.os.Looper;
@@ -47,6 +48,7 @@ final class JarvisStreamingStt {
     private volatile boolean pausedForResponse;
     private volatile boolean closed;
     private AudioRecord microphone;
+    private AcousticEchoCanceler echoCanceler;
     private OnlineRecognizer recognizer;
     private OnlineStream stream;
 
@@ -125,11 +127,20 @@ final class JarvisStreamingStt {
             int minimum=AudioRecord.getMinBufferSize(RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
             if(minimum<=0)throw new IllegalStateException("Microphone format unsupported");
-            AudioRecord recorder=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,RATE,
+            boolean echoAvailable=AcousticEchoCanceler.isAvailable();
+            int inputSource=echoAvailable ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                : MediaRecorder.AudioSource.VOICE_RECOGNITION;
+            AudioRecord recorder=new AudioRecord(inputSource,RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
                 Math.max(minimum,FRAME*2*8));
             if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new IllegalStateException("Microphone initialization failed");
             synchronized(this){microphone=recorder;}
+            if (echoAvailable) {
+                try {
+                    echoCanceler=AcousticEchoCanceler.create(recorder.getAudioSessionId());
+                    if(echoCanceler!=null)echoCanceler.setEnabled(true);
+                }catch(Throwable ignored) { echoCanceler=null; }
+            }
             recorder.startRecording();
             emitState("listening");
             short[] pcm=new short[FRAME];
@@ -240,6 +251,7 @@ final class JarvisStreamingStt {
             if(stream!=null){try{stream.release();}catch(Throwable ignored){}stream=null;}
             if(recognizer!=null){try{recognizer.release();}catch(Throwable ignored){}recognizer=null;}
             synchronized(this) {
+                if(echoCanceler!=null) {try{echoCanceler.release();}catch(Throwable ignored){}echoCanceler=null;}
                 if(microphone!=null) {
                     try{microphone.stop();}catch(Exception ignored){}
                     try{microphone.release();}catch(Exception ignored){}
