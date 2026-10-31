@@ -25,6 +25,7 @@ final class JarvisCoordinator {
     private final JarvisEngineClient urgentDialogue;
     private String lastUrgentCandidate = "";
     private int urgentObservations;
+    private final AtomicInteger urgentEpoch = new AtomicInteger();
     private long lastUrgentAt;
     private JarvisEngineClient executor;
     private final java.util.Map<String,JarvisEngineClient> projectWorkers = new java.util.HashMap<>();
@@ -65,6 +66,7 @@ final class JarvisCoordinator {
     void deactivate() {
         enabled=false;
         speechEpoch.incrementAndGet();
+        urgentEpoch.incrementAndGet();
     }
 
     void interrupt() {
@@ -97,17 +99,17 @@ final class JarvisCoordinator {
         lastUrgentAt=now;
         lastUrgentCandidate="";
         urgentObservations=0;
-        final int ticket=speechEpoch.incrementAndGet();
+        final int ticket=urgentEpoch.incrementAndGet();
         urgentDialogue.submit("INTERIM URGENT SPEECH (ASR may be inaccurate; user may continue speaking): "
             +candidate+"\\nRespond promptly and compassionately if the statement may indicate "
             +"immediate danger. Do not delegate work or claim emergency assistance was called. "
             +"Return only the usual JSON structure, with delegate empty and mode none.",
             new JarvisEngineClient.Callback() {
                 @Override public void onStage(String stage) {
-                    if(enabled && ticket==speechEpoch.get())events.onMilestone("Urgent speech: "+stage);
+                    if(enabled && ticket==urgentEpoch.get())events.onMilestone("Urgent speech: "+stage);
                 }
                 @Override public void onResult(String response) {
-                    if(!enabled || ticket!=speechEpoch.get())return;
+                    if(!enabled || ticket!=urgentEpoch.get())return;
                     String say=response;
                     try {
                         JSONObject output=new JSONObject(response.trim());
@@ -116,7 +118,7 @@ final class JarvisCoordinator {
                     if(!say.trim().isEmpty())events.onSpeech(say,"jarvis-urgent-"+ticket);
                 }
                 @Override public void onError(String diagnostic) {
-                    if(enabled && ticket==speechEpoch.get())
+                    if(enabled && ticket==urgentEpoch.get())
                         events.onError("Urgent dialogue: "+diagnostic);
                 }
             });
