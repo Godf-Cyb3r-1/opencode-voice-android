@@ -27,9 +27,25 @@ final class JarvisEngineClient {
     private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService workers =
         java.util.concurrent.Executors.newSingleThreadExecutor();
-    private String sessionId;
+    private volatile String sessionId;
+    private final java.util.concurrent.ExecutorService corrections =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final boolean dialogueOnly;
+    private final String preferredModel;
+    private final JarvisSessionRegistry registry;
+    private final String projectKey;
 
-    JarvisEngineClient(Context context) { this.context = context.getApplicationContext(); }
+    JarvisEngineClient(Context context) { this(context, false, "default"); }
+    JarvisEngineClient(Context context, boolean dialogueOnly) { this(context, dialogueOnly, "default"); }
+    JarvisEngineClient(Context context, boolean dialogueOnly, String projectKey) {
+        this.context = context.getApplicationContext();
+        this.dialogueOnly = dialogueOnly;
+        this.projectKey=projectKey;
+        this.registry=new JarvisSessionRegistry(context);
+        this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
+        this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
+            .getString("model", "");
+    }
 
     void submit(String instruction, Callback callback) {
         workers.execute(() -> {
@@ -42,8 +58,19 @@ final class JarvisEngineClient {
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
+                    if(dialogueOnly)registry.setDialogueId(sessionId);
+                    else registry.setWorkId(projectKey,sessionId);
+                    if (dialogueOnly && !preferredModel.isEmpty()) {
+                        int slash=preferredModel.indexOf('/');
+                        if (slash<=0 || slash==preferredModel.length()-1)
+                            throw new IllegalArgumentException("Fast model must be provider/model");
+                        JSONObject model=new JSONObject().put("providerID",preferredModel.substring(0,slash))
+                            .put("id",preferredModel.substring(slash+1));
+                        http("POST", "/api/session/" + Uri.encode(sessionId) + "/model",
+                            new JSONObject().put("model",model),12000);
+                    }
                 }
-                stage(callback, "executing");
+                stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
                     previous = latestAssistant(http("GET",
@@ -52,11 +79,16 @@ final class JarvisEngineClient {
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
                 JSONObject prompt = new JSONObject().put("text",
-                    JarvisSpeechStyle.instruction()
+                    dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
-                    + "\\n\\nAfter attempting actions, give one concise spoken status update.");
+                    + "\n\nAfter attempting actions, give one concise spoken status update.");
+
+                // Keep dialogue on a separate session without requiring a preinstalled agent name.
+                stage(callback, "sending prompt to OpenCode");
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
-                long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
+                stage(callback, "waiting for model response");
+                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
+                long firstStableAt = 0L;
                 String latest = "";
                 int stable = 0;
                 while (android.os.SystemClock.elapsedRealtime() < deadline) {
@@ -66,18 +98,66 @@ final class JarvisEngineClient {
                         "/api/session/" + Uri.encode(sessionId) + "/message?type=assistant&order=desc&limit=5",
                         null, 8000);
                     String text = latestAssistant(messages);
-                    if (!text.isEmpty() && text.equals(latest)) stable++; else stable = 0;
+                    if (!text.isEmpty() && text.equals(latest)) stable++;
+                    else { stable = 0; firstStableAt = android.os.SystemClock.elapsedRealtime(); }
                     latest = text;
-                    boolean active = isSessionActive();
-                    if (!active && !latest.isEmpty() && !latest.equals(previousAnswer) && stable >= 0) {
+                    boolean active = true;
+                    if (!dialogueOnly) active = isSessionActive();
+                    // The conversational model must not wait on an indefinitely
+                    // active OpenCode session. Return stable user-facing text.
+                    boolean dialogueReady = dialogueOnly && stable >= 2 &&
+                        android.os.SystemClock.elapsedRealtime() - firstStableAt >= 750L &&
+                        isCompleteDialogueText(latest);
+                    if ((dialogueReady || !active) && !latest.isEmpty() && !latest.equals(previousAnswer)) {
                         String finished = latest;
                         ui.post(() -> callback.onResult(finished));
                         return;
                     }
                 }
-                throw new IllegalStateException("Engine response timed out; check provider and model settings");
+                if(dialogueOnly && isCompleteDialogueText(latest) && !latest.equals(previousAnswer)) {
+                    final String response=latest;
+                    ui.post(() -> callback.onResult(response));
+                    return;
+                }
+                throw new IllegalStateException("Engine response timed out; check configured model and API session status");
             } catch (Exception e) {
                 String diagnostic = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                ui.post(() -> callback.onError(diagnostic));
+            }
+        });
+    }
+
+    private static boolean isCompleteDialogueText(String text) {
+        if(text==null || text.trim().isEmpty())return false;
+        String candidate=text.trim();
+        if(candidate.startsWith("```")) {
+            if(!candidate.endsWith("```") || candidate.length()<7)return false;
+            candidate=candidate.substring(candidate.indexOf('\n')+1,candidate.length()-3).trim();
+        }
+        if(!candidate.startsWith("{"))return true;
+        try {
+            JSONObject output=new JSONObject(candidate);
+            return output.has("say");
+        }catch(Exception incomplete) {
+            return false; // Do not send partially streamed JSON to TTS.
+        }
+    }
+
+    void injectCorrection(String correction, Callback callback) {
+        if(correction==null || correction.trim().isEmpty())return;
+        corrections.execute(() -> {
+            try {
+                String id=sessionId;
+                if(id==null || id.isEmpty())
+                    throw new IllegalStateException("No active OpenCode worker session");
+                JSONObject prompt=new JSONObject().put("text",
+                    "LIVE USER CORRECTION TO THE ONGOING TASK: "+correction+
+                    "\\nPrioritize this latest instruction when it changes the current objective. "+
+                    "Preserve completed safe work where possible; adjust remaining steps.");
+                http("POST", "/api/session/" + Uri.encode(id) + "/prompt",prompt,12000);
+                stage(callback,"correction admitted to active session");
+            }catch(Exception error) {
+                String diagnostic=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
@@ -141,7 +221,7 @@ final class JarvisEngineClient {
                     spoken.append(t);
                 }
             }
-            return JarvisSpeechStyle.prepare(spoken.toString());
+            if(spoken.length()>0)return JarvisSpeechStyle.prepare(spoken.toString());
         }
         return "";
     }
@@ -173,10 +253,15 @@ final class JarvisEngineClient {
                     out.write(buf,0,n);
                 }
                 String data=out.toString("UTF-8").trim();
-                return data.isEmpty()?new JSONObject():new JSONObject(data);
+                if (data.isEmpty()) return new JSONObject();
+                Object parsed = new org.json.JSONTokener(data).nextValue();
+                if (parsed instanceof JSONObject) return (JSONObject) parsed;
+                if (parsed instanceof JSONArray) return new JSONObject().put("data", parsed);
+                throw new IllegalStateException("Unexpected OpenCode API response type");
             }
         } finally {conn.disconnect();}
     }
 
-    void close() { workers.shutdownNow(); }
+    String sessionId(){return sessionId==null?"":sessionId;}
+    void close() { workers.shutdownNow(); corrections.shutdownNow(); }
 }

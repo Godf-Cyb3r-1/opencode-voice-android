@@ -84,12 +84,31 @@ public final class OpenCodeWebActivity extends Activity {
     private JarvisDashboard dashboard;
     private JarvisActionRouter actionRouter;
     private JarvisEngineClient engineClient;
+    private JarvisCoordinator coordinator;
     private boolean showEngineConsole;
     private void toggleEngineConsole() {
         showEngineConsole = !showEngineConsole;
         if (dashboard != null) dashboard.setVisibility(showEngineConsole ? View.GONE : View.VISIBLE);
     }
     private boolean jarvisAnswerPending;
+    private String lastJarvisSpoken = "";
+    private boolean jarvisCurrentlySpeaking;
+    private boolean isAssistantEcho(String heard) {
+        String text=heard==null?"":heard.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9 ]"," ").replaceAll("\\s+"," ").trim();
+        String spoken=lastJarvisSpoken.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9 ]"," ").replaceAll("\\s+"," ").trim();
+        if(text.length()<3)return true;
+        return !spoken.isEmpty() && (spoken.contains(text) || text.contains(spoken));
+    }
+    private void interruptJarvisSpeech() {
+        if (!jarvisCurrentlySpeaking) return;
+        jarvisCurrentlySpeaking=false;
+        jarvisAnswerPending=false;
+        if(speech!=null)speech.stop();
+        if(pocket!=null)pocket.stop();
+        if(coordinator!=null)coordinator.interrupt();
+        if(jarvis!=null)jarvis.onAnswerUnavailable();
+        if(dashboard!=null)dashboard.addEvent("BARGE-IN  •  User speech interrupted playback");
+    }
     private boolean jarvisNarrating;
     private void updateJarvisLabel(String state) {
         if (jarvisButton != null) {
@@ -151,7 +170,7 @@ public final class OpenCodeWebActivity extends Activity {
                     }
                     @Override public void onDone(String id) {
                         handler.post(() -> {
-                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisCurrentlySpeaking=false; jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
                             if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
                                 jarvisNarrating = false;
                                 jarvis.onAnswerSpoken();
@@ -189,8 +208,10 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     private void speakAssistant(String text, String id) {
+        if ("jarvis-native".equals(id) && jarvis != null) jarvis.pauseDuringSpeech();
         String spoken = JarvisSpeechStyle.prepare(text);
         if (spoken.isEmpty()) return;
+        if("jarvis-native".equals(id)) {lastJarvisSpoken=spoken;jarvisCurrentlySpeaking=true;}
         if (preferPocket && pocket != null && !pocketFailed) {
             if (pocket.isReady()) {
                 currentNeuralText=spoken;
@@ -230,6 +251,7 @@ public final class OpenCodeWebActivity extends Activity {
             "Primary speech engine: " + (preferPocket ? "Pocket TTS INT8 (native offline)" : "Android TTS"),
             "Choose reference WAV (voice cloning)",
             "Pocket TTS speaking speed",
+            "Jarvis fast dialogue model",
             "Preview Jarvis voice",
             "Android fallback TTS engine",
             "Android fallback voice",
@@ -247,15 +269,39 @@ public final class OpenCodeWebActivity extends Activity {
                         break;
                     case 1: choosePocketReference(); break;
                     case 2: choosePocketSpeed(); break;
-                    case 3: speakAssistant("Good evening. Jarvis is online, and your assistant is ready.", "jarvis-preview"); break;
-                    case 4: chooseTtsEngine(); break;
-                    case 5: chooseInstalledVoice(); break;
-                    case 6:
+                    case 3: chooseJarvisFastModel(); break;
+                    case 4: if (coordinator != null) coordinator.activate(); break;
+                    case 5: chooseTtsEngine(); break;
+                    case 6: chooseInstalledVoice(); break;
+                    case 7:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
                         catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
                         break;
                 }
             }).setNegativeButton("Close", null).show();
+    }
+
+    private void chooseJarvisFastModel() {
+        android.widget.EditText entry=new android.widget.EditText(this);
+        entry.setSingleLine(true);
+        entry.setHint("provider/model");
+        entry.setText(getSharedPreferences("jarvis_dialogue", MODE_PRIVATE)
+            .getString("model", ""));
+        new AlertDialog.Builder(this)
+            .setTitle("Jarvis fast conversational model")
+            .setMessage("Choose a lightweight non-thinking model already configured in OpenCode. Empty uses OpenCode's default. Restart the conversation to apply.")
+            .setView(entry)
+            .setPositiveButton("Save", (dialog,which)-> {
+                String model=entry.getText().toString().trim();
+                if(!model.isEmpty() && !model.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+")) {
+                    if(dashboard!=null)dashboard.addEvent("Invalid model ID; use provider/model");
+                    return;
+                }
+                getSharedPreferences("jarvis_dialogue",MODE_PRIVATE).edit()
+                    .putString("model",model).apply();
+                if(dashboard!=null)dashboard.addEvent("Fast model saved; re-open Jarvis to apply");
+            })
+            .setNegativeButton("Cancel",null).show();
     }
 
     private static final int PICK_REFERENCE_AUDIO = 4196;
@@ -276,7 +322,7 @@ public final class OpenCodeWebActivity extends Activity {
                 float speed=.75f+speedControl.getProgress()/100f;
                 OpenCodeWebService.preferences(this).edit().putFloat("jarvis_pocket_speed",speed).apply();
                 if(pocket!=null)pocket.setSpeed(speed);
-                speakAssistant("Speech pacing adjusted. How does that sound?", "jarvis-preview");
+                if (dashboard != null) dashboard.addEvent("Voice speed configured");
             }).setNegativeButton("Cancel",null).show();
     }
 
@@ -449,7 +495,7 @@ public final class OpenCodeWebActivity extends Activity {
             }
             @Override public void completed(String id) {
                 currentNeuralText=null;currentNeuralId=null;
-                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
             }
             @Override public void failed(String id, String reason) {
                 if (dashboard != null) dashboard.addEvent("POCKET TTS ERROR  •  " + reason);
@@ -473,43 +519,34 @@ public final class OpenCodeWebActivity extends Activity {
         });
 
         pocket.setSpeed(OpenCodeWebService.preferences(this).getFloat("jarvis_pocket_speed", 1.05f));
-        engineClient = new JarvisEngineClient(this);
-        jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
-            @Override public void onTranscript(String transcript) {
-                jarvisAnswerPending = true;
-                pendingNarration = "";
-                if (dashboard != null) dashboard.addEvent("VOICE REQUEST  •  " + transcript);
-                if (handleNativeAssistantAction(transcript)) {
-                    jarvisAnswerPending = false;
-                    if (speech == null) jarvis.onAnswerSpoken();
-                } else if (engineClient != null) {
-                    engineClient.submit(transcript, new JarvisEngineClient.Callback() {
-                        @Override public void onStage(String stage) {
-                            if (dashboard != null) {
-                                dashboard.setState("working");
-                                dashboard.addEvent("AGENT  •  " + stage);
-                            }
-                        }
-                        @Override public void onResult(String response) {
-                            jarvisAnswerPending = false;
-                            if (dashboard != null) dashboard.addEvent("AGENT COMPLETE  •  " + response);
-                            if (jarvis != null && jarvis.isActive()) {
-                                dashboard.setState("speaking");
-                                speakAssistant(response, "jarvis-native");
-                            } else if (jarvis != null) jarvis.onAnswerSpoken();
-                        }
-                        @Override public void onError(String diagnostic) {
-                            jarvisAnswerPending = false;
-                            if (dashboard != null) {
-                                dashboard.setState("error");
-                                dashboard.addEvent("ENGINE ERROR  •  " + diagnostic);
-                            }
-                            if (jarvis != null) jarvis.stop();
-                        }
-                    });
+        coordinator = new JarvisCoordinator(this, new JarvisCoordinator.Events() {
+            @Override public void onSpeech(String words, String utteranceId) {
+                if (jarvis != null && jarvis.isActive()) {
+                    jarvisAnswerPending = true;
+                    speakAssistant(words, "jarvis-native");
                 }
             }
+            @Override public void onMilestone(String stage) {
+                if (dashboard != null) dashboard.addEvent("JARVIS  •  " + stage);
+            }
+            @Override public void onError(String diagnostic) {
+                jarvisAnswerPending = false;
+                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("listening");}
+                if (jarvis != null) jarvis.onAnswerUnavailable();
+            }
+        });
+        jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
+            @Override public void onTranscript(String transcript) {
+                if (jarvisCurrentlySpeaking && isAssistantEcho(transcript)) return;
+                if (jarvisCurrentlySpeaking) interruptJarvisSpeech();
+                jarvisAnswerPending = true;
+                pendingNarration = "";
+                if (dashboard != null) dashboard.addEvent("YOU  •  " + transcript);
+                if (coordinator != null) coordinator.onUserSaid(transcript);
+            }
             @Override public void onPartial(String partial) {
+                if(jarvisCurrentlySpeaking && !isAssistantEcho(partial) && partial.trim().split("\\s+").length>=2)
+                    interruptJarvisSpeech();
                 if (dashboard != null) dashboard.showLiveTranscript(partial);
             }
             @Override public void onState(String state) {
@@ -525,10 +562,24 @@ public final class OpenCodeWebActivity extends Activity {
         jarvisButton.setOnClickListener(v -> {
             if (speech != null) speech.stop();
             if (pocket != null) pocket.stop();
-            jarvis.toggle();
+            if (coordinator != null) coordinator.interrupt();
+            if (jarvis != null && jarvis.isActive()) {
+                // Touch during conversation interrupts playback but does not
+                // kill the conversational session or ongoing worker.
+                if (jarvisAnswerPending) {
+                    jarvisAnswerPending=false;
+                    jarvis.onAnswerUnavailable();
+                } else {
+                    jarvis.stop();
+                    if (coordinator != null) coordinator.deactivate();
+                }
+            } else {
+                jarvis.toggle();
+                if (coordinator != null) coordinator.activate();
+            }
             autoNarrate = false;
             handler.removeCallbacks(narrationPoll);
-            updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+            updateJarvisLabel(jarvis.isActive() ? "ready" : "off");
         });
         toolbar.addView(jarvisButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
         Button mic = new Button(this);
@@ -654,9 +705,22 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void toggleListening() {
                 if (speech != null) speech.stop();
                 jarvis.toggle();
+                if(coordinator!=null) {
+                    if(jarvis.isActive())coordinator.activate();
+                    else coordinator.deactivate();
+                }
                 autoNarrate = false;
                 handler.removeCallbacks(narrationPoll);
                 updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+            }
+            @Override public void submitText(String text) {
+                if(jarvis==null || !jarvis.isActive()) {
+                    if(dashboard!=null)dashboard.addEvent("JARVIS  •  Start Jarvis to establish the conversation session");
+                    return;
+                }
+                if(jarvisCurrentlySpeaking)interruptJarvisSpeech();
+                if(dashboard!=null)dashboard.addEvent("YOU  •  "+text);
+                if(coordinator!=null)coordinator.onUserSaid(text);
             }
             @Override public void openConsole() { toggleEngineConsole(); }
             @Override public void openSettings() { showVoiceSettings(); }
@@ -1030,7 +1094,7 @@ public final class OpenCodeWebActivity extends Activity {
                 handler.post(() -> {
                     if (pocket != null) pocket.setReferenceFile(target.getAbsolutePath());
                     if (dashboard != null) dashboard.addEvent("REFERENCE VOICE  •  Installed locally. Testing clone.");
-                    speakAssistant("Voice profile installed. I'm ready to assist you.", "jarvis-preview");
+                    if (coordinator != null && jarvis != null && jarvis.isActive()) coordinator.activate();
                 });
             } catch (Throwable failure) {
                 temp.delete();
@@ -1166,6 +1230,7 @@ public final class OpenCodeWebActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
         if (engineClient != null) engineClient.close();
+        if (coordinator != null) coordinator.close();
         if (pocket != null) pocket.close();
         if (speech != null) { speech.stop(); speech.shutdown(); speech = null; }
         if (fileCallback != null) fileCallback.onReceiveValue(null);

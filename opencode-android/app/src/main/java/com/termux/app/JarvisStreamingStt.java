@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.audiofx.AcousticEchoCanceler;
 import android.media.MediaRecorder;
 import android.os.Handler;
 import android.os.Looper;
@@ -47,6 +48,7 @@ final class JarvisStreamingStt {
     private volatile boolean pausedForResponse;
     private volatile boolean closed;
     private AudioRecord microphone;
+    private AcousticEchoCanceler echoCanceler;
     private OnlineRecognizer recognizer;
     private OnlineStream stream;
 
@@ -113,7 +115,7 @@ final class JarvisStreamingStt {
         OnlineRecognizerConfig config=OnlineRecognizerConfig.builder()
             .setOnlineModelConfig(model)
             .setDecodingMethod("greedy_search")
-            .setEnableEndpoint(false)
+            .setEnableEndpoint(true)
             .build();
         recognizer=new OnlineRecognizer(config);
         stream=recognizer.createStream();
@@ -125,11 +127,21 @@ final class JarvisStreamingStt {
             int minimum=AudioRecord.getMinBufferSize(RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
             if(minimum<=0)throw new IllegalStateException("Microphone format unsupported");
-            AudioRecord recorder=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,RATE,
+            boolean echoAvailable=AcousticEchoCanceler.isAvailable();
+            // VOICE_COMMUNICATION can heavily suppress or distort phonemes on
+            // vendor DSPs. Prefer unprocessed speech input for ASR.
+            int inputSource=MediaRecorder.AudioSource.VOICE_RECOGNITION;
+            AudioRecord recorder=new AudioRecord(inputSource,RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
                 Math.max(minimum,FRAME*2*8));
             if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new IllegalStateException("Microphone initialization failed");
             synchronized(this){microphone=recorder;}
+            if (echoAvailable) {
+                try {
+                    echoCanceler=AcousticEchoCanceler.create(recorder.getAudioSessionId());
+                    if(echoCanceler!=null)echoCanceler.setEnabled(true);
+                }catch(Throwable ignored) { echoCanceler=null; }
+            }
             recorder.startRecording();
             emitState("listening");
             short[] pcm=new short[FRAME];
@@ -138,6 +150,8 @@ final class JarvisStreamingStt {
             long lastSpeech=0L;
             long startedUtterance=0L;
             long lastPartialUpdate=0L;
+            long lastTextChange=0L;
+            long lastFrameDebug=0L;
             int stable=0;
             boolean hasSpeech=false;
             boolean wasPaused=false;
@@ -151,7 +165,7 @@ final class JarvisStreamingStt {
                 if(pausedForResponse) {
                     if(!wasPaused) {
                         recognizer.reset(stream);
-                        hasSpeech=false;activeFrames=0;stable=0;
+                        hasSpeech=false;activeFrames=0;stable=0;lastTextChange=0L;
                         lastPartial="";lastStable="";
                     }
                     wasPaused=true;
@@ -186,6 +200,7 @@ final class JarvisStreamingStt {
                     lastStable=lastPartial;
                     lastPartial=partial;
                     if (!partial.isEmpty()) {
+                        lastTextChange=now;
                         // New decoded words override quiet microphone RMS.
                         hasSpeech=true;
                         if (startedUtterance==0L) startedUtterance=now;
@@ -197,20 +212,40 @@ final class JarvisStreamingStt {
                         lastPartialUpdate=now;
                     }
                 }else if(!partial.isEmpty())stable++;
-                if(!hasSpeech || partial.isEmpty())continue;
-                long silence=now-lastSpeech;
-                boolean unfinished=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                long threshold=unfinished?2400:partial.endsWith("?")||partial.endsWith(".")?850:1350;
-                // No hard recording duration limit. Long pauses while mid-thought
-                // are tolerated, and VAD alone never forces an OpenCode action.
+                if(!hasSpeech || partial.isEmpty()) {
+                    // An endpoint can be signalled without a viable transcript.
+                    // Recycle the acoustic state rather than staying in HEARING.
+                    if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
+                        recognizer.reset(stream);
+                        activeFrames=0;hasSpeech=false;startedUtterance=0L;
+                        emitState("listening");
+                    }
+                    continue;
+                }
+                long quiet=now-lastSpeech;
+                long textIdle=lastTextChange==0L?0L:now-lastTextChange;
+                boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
                 boolean meaningful=partial.split("\\s+").length>=2;
-                if(meaningful && silence>=threshold && stable>=3 && now-startedUtterance>=500) {
+                // Avoid promoting random decoded noise to a user command.
+                // Speech energy must have been present for multiple frames.
+                boolean speechObserved=activeFrames>=3 || now-lastSpeech<2500 && lastSpeech>0;
+                boolean nativeEndpoint=recognizer.isEndpoint(stream);
+                // Stop waiting forever when microphone noise keeps the crude
+                // energy detector active. Require stable recognized text too.
+                long quietLimit=incomplete?2800:1400;
+                long stuckLimit=incomplete?5500:2500;
+                boolean endOfTurn=meaningful && speechObserved && stable>=3 &&
+                    (nativeEndpoint && textIdle>=350 ||
+                     quiet>=quietLimit && textIdle>=650 ||
+                     textIdle>=stuckLimit);
+                if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
-                    pausedForResponse=true;
+                    // Immediately reset the utterance, keeping the microphone
+                    // open and decoding during dialogue/worker processing.
                     recognizer.reset(stream);
-                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastPartial="";
-                    emitState("thinking");
+                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
                     ui.post(()->events.onFinal(utterance));
+                    emitState("listening");
                 }
             }
         }catch(Throwable failure) {
@@ -220,6 +255,7 @@ final class JarvisStreamingStt {
             if(stream!=null){try{stream.release();}catch(Throwable ignored){}stream=null;}
             if(recognizer!=null){try{recognizer.release();}catch(Throwable ignored){}recognizer=null;}
             synchronized(this) {
+                if(echoCanceler!=null) {try{echoCanceler.release();}catch(Throwable ignored){}echoCanceler=null;}
                 if(microphone!=null) {
                     try{microphone.stop();}catch(Exception ignored){}
                     try{microphone.release();}catch(Exception ignored){}
