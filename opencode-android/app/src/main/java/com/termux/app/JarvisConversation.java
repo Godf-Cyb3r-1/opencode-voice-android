@@ -60,6 +60,7 @@ final class JarvisConversation {
         hasMeaningfulSpeech=false;
         turns.start();
         useAndroid=activity.getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true);
+        turns.requireFinalResult(useAndroid);
         if(useAndroid){
             androidStt=new JarvisAndroidStt(activity,new JarvisAndroidStt.Events(){
                 @Override public void onState(String state){if(active)callbacks.onState(state);}
