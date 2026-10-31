@@ -177,6 +177,28 @@ final class JarvisEngineClient {
         }
     }
 
+    /** Read a live worker's context without injecting a new prompt or interrupting it. */
+    void sideQuestion(String question, Callback callback) {
+        corrections.execute(() -> {
+            try {
+                String id = sessionId == null ? "" : sessionId.trim();
+                if(id.isEmpty()) throw new IllegalStateException("No worker session exists yet");
+                stage(callback, "reading worker progress without interrupting it");
+                JSONObject input = new JSONObject().put("prompt",
+                    "Briefly answer the user from this work session's actual progress. " +
+                    "Do not assume completion or invent evidence. Question: " + question);
+                JSONObject result = unwrap(http("POST", "/api/session/" + Uri.encode(id) +
+                    "/generate", input, 20000));
+                String answer = result.optString("text", "").trim();
+                if(answer.isEmpty()) throw new IllegalStateException("Worker returned an empty progress answer");
+                ui.post(() -> callback.onResult(JarvisSpeechStyle.prepare(answer)));
+            } catch(Exception e) {
+                String diagnostic = e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
+                ui.post(() -> callback.onError(diagnostic));
+            }
+        });
+    }
+
     void injectCorrection(String correction, Callback callback) {
         if(correction==null || correction.trim().isEmpty())return;
         corrections.execute(() -> {
