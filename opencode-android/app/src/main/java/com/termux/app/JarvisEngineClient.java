@@ -64,7 +64,7 @@ final class JarvisEngineClient {
                     + "\n\nTask: " + instruction
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
                 if (dialogueOnly && !preferredModel.isEmpty()) prompt.put("model", preferredModel);
-                if (dialogueOnly) prompt.put("agent", "jarvis-dialogue");
+                // Keep dialogue on a separate session without requiring a preinstalled agent name.
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
                 String latest = "";
