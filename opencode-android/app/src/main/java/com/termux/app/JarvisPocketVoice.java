@@ -156,7 +156,9 @@ final class JarvisPocketVoice {
             try {
                 if (ticket!=generation.get() || closed) return;
                 if (announceStart) main.post(()->events.started(id));
-                for (String phrase:JarvisSpeechStyle.chunks(text)) {
+                // Synthesize the entire conversational utterance in one pass.
+                // Fragment-by-fragment generation caused audible 5-10 word gaps.
+                for (String phrase:new String[]{text.trim()}) {
                     if (closed || ticket!=generation.get()) return;
                     GenerationConfig cfg=new GenerationConfig();
                     cfg.setSpeed(speed);
@@ -169,7 +171,7 @@ final class JarvisPocketVoice {
                     cfg.setReferenceSampleRate(ref.getSampleRate());
                     Map<String,String> extra = new HashMap<>();
                     extra.put("temperature", "0.7");
-                    extra.put("chunk_size", "15");
+                    extra.put("chunk_size", "40");
                     cfg.setExtra(extra);
                     GeneratedAudio audio=model.generateWithConfigAndCallback(phrase,cfg,samples -> 1);
                     float[] samples=audio.getSamples();
