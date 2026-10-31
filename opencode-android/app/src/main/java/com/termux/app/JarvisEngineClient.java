@@ -53,23 +53,7 @@ final class JarvisEngineClient {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
-                if (sessionId == null) {
-                    JSONObject create = new JSONObject().put("messages", new JSONArray());
-                    JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
-                    sessionId = session.optString("id", session.optString("sessionID", ""));
-                    if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
-                    if(dialogueOnly)registry.setDialogueId(sessionId);
-                    else registry.setWorkId(projectKey,sessionId);
-                    if (dialogueOnly && !preferredModel.isEmpty()) {
-                        int slash=preferredModel.indexOf('/');
-                        if (slash<=0 || slash==preferredModel.length()-1)
-                            throw new IllegalArgumentException("Fast model must be provider/model");
-                        JSONObject model=new JSONObject().put("providerID",preferredModel.substring(0,slash))
-                            .put("id",preferredModel.substring(slash+1));
-                        http("POST", "/api/session/" + Uri.encode(sessionId) + "/model",
-                            new JSONObject().put("model",model),12000);
-                    }
-                }
+                ensureSession(callback);
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -85,7 +69,15 @@ final class JarvisEngineClient {
 
                 // Keep dialogue on a separate session without requiring a preinstalled agent name.
                 stage(callback, "sending prompt to OpenCode");
-                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                try {
+                    http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                } catch (IllegalStateException missing) {
+                    if (!missing.getMessage().contains("HTTP 404")) throw missing;
+                    stage(callback, "session expired; recreating dialogue or work session");
+                    clearSession();
+                    ensureSession(callback);
+                    http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                }
                 stage(callback, "waiting for model response");
                 long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
                 long firstStableAt = 0L;
@@ -127,6 +119,48 @@ final class JarvisEngineClient {
         });
     }
 
+    private void clearSession() {
+        registry.clearStaleSession(dialogueOnly, projectKey);
+        sessionId = "";
+    }
+
+    private void ensureSession(Callback callback) throws Exception {
+        // Registry returns an empty string for a missing session, not null.
+        // Never submit to /api/session//prompt.
+        String id = sessionId == null ? "" : sessionId.trim();
+        if (!id.isEmpty()) {
+            try {
+                JSONObject existing = unwrap(http("GET", "/api/session/" + Uri.encode(id), null, 8000));
+                if (!id.equals(existing.optString("id", "")))
+                    throw new IllegalStateException("Persisted session identity mismatch");
+                return;
+            } catch (IllegalStateException stale) {
+                if (!stale.getMessage().contains("HTTP 404") &&
+                    !stale.getMessage().contains("identity mismatch")) throw stale;
+                stage(callback, "stale session detected; restoring");
+                clearSession();
+            }
+        }
+        JSONObject created = unwrap(http("POST", "/api/session", new JSONObject(), 12000));
+        String fresh = created.optString("id", created.optString("sessionID", "")).trim();
+        if (fresh.isEmpty()) throw new IllegalStateException("OpenCode did not return a session ID");
+        sessionId = fresh;
+        if (dialogueOnly) registry.setDialogueId(fresh);
+        else registry.setWorkId(projectKey, fresh);
+        stage(callback, "new OpenCode session ready");
+        // Model should be selected through the session's supported model API
+        // only after validating the provider/model pair.
+        if (dialogueOnly && !preferredModel.isEmpty()) {
+            int slash = preferredModel.indexOf('/');
+            if (slash <= 0 || slash == preferredModel.length()-1)
+                throw new IllegalArgumentException("Fast model must be provider/model");
+            JSONObject model = new JSONObject().put("providerID", preferredModel.substring(0,slash))
+                .put("id", preferredModel.substring(slash+1));
+            http("POST", "/api/session/" + Uri.encode(fresh) + "/model",
+                new JSONObject().put("model", model), 12000);
+        }
+    }
+
     private static boolean isCompleteDialogueText(String text) {
         if(text==null || text.trim().isEmpty())return false;
         String candidate=text.trim();
@@ -148,7 +182,7 @@ final class JarvisEngineClient {
         corrections.execute(() -> {
             try {
                 String id=sessionId;
-                if(id==null || id.isEmpty())
+                if(id==null || id.trim().isEmpty())
                     throw new IllegalStateException("No active OpenCode worker session");
                 JSONObject prompt=new JSONObject().put("text",
                     "LIVE USER CORRECTION TO THE ONGOING TASK: "+correction+
