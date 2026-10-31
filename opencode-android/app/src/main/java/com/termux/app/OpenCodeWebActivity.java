@@ -166,7 +166,7 @@ public final class OpenCodeWebActivity extends Activity {
                 speech.setPitch(pitch);
                 speech.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
                     @Override public void onStart(String id) {
-                        handler.post(() -> { if (dashboard != null) dashboard.setState("speaking"); });
+                        handler.post(() -> { if ("jarvis-native".equals(id)) jarvisCurrentlySpeaking=true; if (dashboard != null) dashboard.setState("speaking"); });
                     }
                     @Override public void onDone(String id) {
                         handler.post(() -> {
@@ -212,7 +212,7 @@ public final class OpenCodeWebActivity extends Activity {
         if ("jarvis-native".equals(id) && jarvis != null) jarvis.pauseDuringSpeech();
         String spoken = JarvisSpeechStyle.prepare(text);
         if (spoken.isEmpty()) return;
-        if("jarvis-native".equals(id)) {lastJarvisSpoken=spoken;jarvisCurrentlySpeaking=true;}
+        if("jarvis-native".equals(id)) lastJarvisSpoken=spoken;
         if (preferPocket && pocket != null && !pocketFailed) {
             if (pocket.isReady()) {
                 currentNeuralText=spoken;
@@ -493,6 +493,7 @@ public final class OpenCodeWebActivity extends Activity {
                 }
             }
             @Override public void started(String id) {
+                if ("jarvis-native".equals(id)) jarvisCurrentlySpeaking=true;
                 if (dashboard != null) dashboard.setState("speaking");
             }
             @Override public void completed(String id) {
