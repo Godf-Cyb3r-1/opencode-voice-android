@@ -62,7 +62,7 @@ final class JarvisEngineClient {
                             new JSONObject().put("model",model),12000);
                     }
                 }
-                stage(callback, "executing");
+                stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
                     previous = latestAssistant(http("GET",
@@ -76,7 +76,9 @@ final class JarvisEngineClient {
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
 
                 // Keep dialogue on a separate session without requiring a preinstalled agent name.
+                stage(callback, "sending prompt to OpenCode");
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                stage(callback, "waiting for model response");
                 long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
                 long firstStableAt = 0L;
                 String latest = "";
@@ -211,7 +213,7 @@ final class JarvisEngineClient {
                     spoken.append(t);
                 }
             }
-            return JarvisSpeechStyle.prepare(spoken.toString());
+            if(spoken.length()>0)return JarvisSpeechStyle.prepare(spoken.toString());
         }
         return "";
     }
