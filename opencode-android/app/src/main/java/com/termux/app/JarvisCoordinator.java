@@ -22,7 +22,6 @@ final class JarvisCoordinator {
     }
 
     private final JarvisEngineClient dialogue;
-    private final JarvisEngineClient greeter;
     private JarvisEngineClient executor;
     private final Context context;
     private final JarvisSessionRegistry registry;
