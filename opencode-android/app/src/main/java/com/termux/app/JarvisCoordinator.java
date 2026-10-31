@@ -99,7 +99,7 @@ final class JarvisCoordinator {
             "avoid repetitive phrases, overacting, forced jokes, or claims of completed actions. "+
             "Infer whether the human is chatting, revising ongoing work, or requesting a task. "+
             "You have access to actual OpenCode workers through the controller. Never say you cannot hear, speak, or use tools when the app is active; report real API or voice errors instead. " +
-            "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\",\"mode\":\"new or revise or none\"}. "+
+            "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\",\"mode\":\"new or revise or none\",\"project\":\"project name or empty string\"}. "+
             "Delegate work when it requires tools or sustained actions; keep conversational replies immediate. "+
             "If existing work is running and the human modifies it, delegate a correction or update; "+
             "never claim the worker accepted it before confirmation.");
