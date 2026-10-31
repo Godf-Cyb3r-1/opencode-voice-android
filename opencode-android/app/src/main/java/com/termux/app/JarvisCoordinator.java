@@ -22,7 +22,16 @@ final class JarvisCoordinator {
     }
 
     private final JarvisEngineClient dialogue;
+    private final JarvisEngineClient urgentDialogue;
+    private final JarvisEngineClient previewDialogue;
+    private long lastPreviewAt;
+    private String lastUrgentCandidate = "";
+    private int urgentObservations;
+    private final AtomicInteger urgentEpoch = new AtomicInteger();
+    private long lastUrgentAt;
     private JarvisEngineClient executor;
+    private final java.util.Map<String,JarvisEngineClient> projectWorkers = new java.util.HashMap<>();
+    private final java.util.Map<String,String> projectJobs = new java.util.HashMap<>();
     private final Context context;
     private final JarvisSessionRegistry registry;
     private String project;
@@ -42,7 +51,10 @@ final class JarvisCoordinator {
         project=registry.currentProject();
         if(project.isEmpty())project="general-work";
         dialogue = new JarvisEngineClient(context, true);
+        urgentDialogue = new JarvisEngineClient(context, true, "urgent-dialogue");
+        previewDialogue = new JarvisEngineClient(context, true, "preview-dialogue");
         executor = new JarvisEngineClient(context, false,project);
+        projectWorkers.put(project,executor);
         this.events=events;
     }
 
@@ -57,6 +69,7 @@ final class JarvisCoordinator {
     void deactivate() {
         enabled=false;
         speechEpoch.incrementAndGet();
+        urgentEpoch.incrementAndGet();
     }
 
     void interrupt() {
@@ -65,9 +78,111 @@ final class JarvisCoordinator {
         speechEpoch.incrementAndGet();
     }
 
+    /**
+     * Preview-only urgent handling. Partial hypotheses NEVER delegate worker jobs.
+     * The model generates any actual words; there are no canned acknowledgments.
+     */
+    /** Occasional model-authored backchannel, never a work prompt or canned filler. */
+    void onLongInterimSpeech(String hypothesis) {
+        if(!enabled || hypothesis==null)return;
+        String value=hypothesis.trim();
+        if(value.length()<90 || value.split("\\s+").length<14)return;
+        if(value.matches("(?s).*[.!?]$"))return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(now-lastPreviewAt<20000L)return;
+        lastPreviewAt=now;
+        final int activeTurn=speechEpoch.get();
+        previewDialogue.submit("PARTIAL HUMAN SPEECH (user still speaking): "+value+
+            "\\nEvaluate whether any spoken backchannel is helpful right now. "
+            +"Usually remain silent. If meaningful, choose a unique very short "
+            +"natural acknowledgment suited to their intent and emotion. "
+            +"Never delegate or treat the partial speech as a final instruction. "
+            +"Return only the JSON with say empty when silence is appropriate.",
+            new JarvisEngineClient.Callback() {
+                @Override public void onStage(String stage) {}
+                @Override public void onResult(String response) {
+                    if(!enabled || speechEpoch.get()!=activeTurn)return;
+                    try {
+                        JSONObject output=new JSONObject(response.trim());
+                        String say=output.optString("say","").trim();
+                        if(!say.isEmpty() && say.split("\\s+").length<=8)
+                            events.onSpeech(say,"jarvis-backchannel-"+activeTurn);
+                    } catch(Exception ignored) {}
+                }
+                @Override public void onError(String error) {
+                    if(enabled && speechEpoch.get()==activeTurn)
+                        events.onMilestone("Backchannel unavailable; continuing to listen");
+                }
+            });
+    }
+
+    void onInterimSpeech(String hypothesis) {
+        if(!enabled || hypothesis==null)return;
+        String candidate=hypothesis.trim().replaceAll("\\s+"," ");
+        if(candidate.length()<12)return;
+        String words=candidate.toLowerCase(java.util.Locale.ROOT);
+        // Narrow high-recall trigger for a fast path; NOT a diagnosis.
+        boolean possibleDanger=words.matches(
+            "(?s).*(\\b(dying|die|suicide|kill myself|hurt myself|can't breathe|cannot breathe|overdose|bleeding badly|heart attack|going to die|will die|will died|will be dead|someone is dying|emergency|help me now)\\b).*");
+        if(!possibleDanger)return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(now-lastUrgentAt<15000)return;
+        if(lastUrgentCandidate.isEmpty() || !candidate.startsWith(lastUrgentCandidate)) {
+            lastUrgentCandidate=candidate;
+            urgentObservations=1;
+            return;
+        }
+        if(++urgentObservations<2)return;
+        lastUrgentAt=now;
+        lastUrgentCandidate="";
+        urgentObservations=0;
+        final int ticket=urgentEpoch.incrementAndGet();
+        urgentDialogue.submit("INTERIM URGENT SPEECH (ASR may be inaccurate; user may continue speaking): "
+            +candidate+"\\nRespond promptly and compassionately if the statement may indicate "
+            +"immediate danger. Do not delegate work or claim emergency assistance was called. "
+            +"Return only the usual JSON structure, with delegate empty and mode none.",
+            new JarvisEngineClient.Callback() {
+                @Override public void onStage(String stage) {
+                    if(enabled && ticket==urgentEpoch.get())events.onMilestone("Urgent speech: "+stage);
+                }
+                @Override public void onResult(String response) {
+                    if(!enabled || ticket!=urgentEpoch.get())return;
+                    String say=response;
+                    try {
+                        JSONObject output=new JSONObject(response.trim());
+                        say=output.optString("say","");
+                    } catch(Exception ignored) {}
+                    if(!say.trim().isEmpty())events.onSpeech(say,"jarvis-urgent-"+ticket);
+                }
+                @Override public void onError(String diagnostic) {
+                    if(enabled && ticket==urgentEpoch.get())
+                        events.onError("Urgent dialogue: "+diagnostic);
+                }
+            });
+    }
+
     void onUserSaid(String words) {
         if(!enabled || words==null || words.trim().isEmpty()) return;
         lastUserWords=words.trim();
+        String lower=lastUserWords.toLowerCase(java.util.Locale.ROOT);
+        if(lower.startsWith("/btw ") || lower.equals("/btw") ||
+            lower.matches(".*\\b(progress|status update|how is the task|how is the build|what is the agent doing)\\b.*")) {
+            String question=lower.startsWith("/btw") ?
+                lastUserWords.substring(Math.min(4,lastUserWords.length())).trim() : lastUserWords;
+            if(question.isEmpty()) question="What has the worker actually done so far?";
+            final int ticket=speechEpoch.incrementAndGet();
+            executor.sideQuestion(question,new JarvisEngineClient.Callback() {
+                @Override public void onStage(String stage) {if(enabled)events.onMilestone("Side question: "+stage);}
+                @Override public void onResult(String answer) {
+                    if(enabled && speechEpoch.get()==ticket) events.onSpeech(answer,"jarvis-btw-"+ticket);
+                }
+                @Override public void onError(String error) {
+                    if(enabled && speechEpoch.get()==ticket)
+                        events.onError("Unable to read worker status: "+error);
+                }
+            });
+            return;
+        }
         final String request=lastUserWords;
         final String context="Current project: "+project+". Prior project summary: "+registry.projectSummary(project)+". Active delegated work: "+(activeWork.isEmpty()?"none":activeWork)+
             ". Latest work stage: "+(workStage.isEmpty()?"none":workStage)+". ";
@@ -76,7 +191,8 @@ final class JarvisCoordinator {
             "Reply briefly and naturally with varied human-like wit and warmth when appropriate; "+
             "avoid repetitive phrases, overacting, forced jokes, or claims of completed actions. "+
             "Infer whether the human is chatting, revising ongoing work, or requesting a task. "+
-            "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\",\"mode\":\"new or revise or none\"}. "+
+            "You have access to actual OpenCode workers through the controller. Never say you cannot hear, speak, or use tools when the app is active; report real API or voice errors instead. " +
+            "Return ONLY compact JSON: {\"say\":\"your natural spoken reply\",\"delegate\":\"specific executable instruction or empty string\",\"mode\":\"new or revise or none\",\"project\":\"project name or empty string\"}. "+
             "Delegate work when it requires tools or sustained actions; keep conversational replies immediate. "+
             "If existing work is running and the human modifies it, delegate a correction or update; "+
             "never claim the worker accepted it before confirmation.");
@@ -118,29 +234,31 @@ final class JarvisCoordinator {
                     }
                 }
                 if(!spoken.isEmpty()) events.onSpeech(spoken,"jarvis-dialogue-"+ticket);
+                if(!selectedProject.isEmpty() && !selectedProject.equalsIgnoreCase(project)) selectProject(selectedProject);
                 if(!delegate.isEmpty()) {
-                    if(!selectedProject.isEmpty() && !selectedProject.equalsIgnoreCase(project)) selectProject(selectedProject);
                     if("revise".equals(mode) && !activeWork.isEmpty()) reviseWork(delegate);
                     else delegateWork(delegate);
                 }
             }
             @Override public void onError(String diagnostic) {
-                if(enabled) events.onError("Dialogue request "+ticket+": "+diagnostic);
+                if(enabled && ticket==speechEpoch.get()) events.onError("Dialogue request "+ticket+": "+diagnostic);
             }
         });
     }
 
     private synchronized void selectProject(String name) {
-        if(name.equalsIgnoreCase(project))return;
-        if(!activeWork.isEmpty()) {
-            events.onError("Cannot switch work project while current task is running; finish or stop it first");
-            return;
-        }
-        executor.close();
-        project=name;
+        if(name==null || name.trim().isEmpty() || name.equalsIgnoreCase(project)) return;
+        // Switching the active project never closes an executing worker session.
+        project=name.trim();
         registry.setCurrentProject(project);
-        executor=new JarvisEngineClient(context,false,project);
-        events.onMilestone("Resumed project: "+project);
+        JarvisEngineClient existing=projectWorkers.get(project);
+        if(existing==null) {
+            existing=new JarvisEngineClient(context,false,project);
+            projectWorkers.put(project,existing);
+        }
+        executor=existing;
+        activeWork=projectJobs.containsKey(project)?projectJobs.get(project):"";
+        events.onMilestone("Selected project: "+project);
     }
 
     private void reviseWork(String instruction) {
@@ -162,9 +280,12 @@ final class JarvisCoordinator {
     private void delegateWork(String instruction) {
         if(!enabled)return;
         activeWork=instruction;
-        registry.updateProject(project,instruction);
+        final String jobProject=project;
+        final JarvisEngineClient jobWorker=executor;
+        projectJobs.put(jobProject,instruction);
+        registry.updateProject(jobProject,instruction);
         final int revision=++workRevision;
-        events.onMilestone("Subagent accepted task");
+        events.onMilestone("Submitting task to OpenCode worker");
         // Announce real progress only if a delegated task is still running
         // after a meaningful interval. All words are composed by the model.
         ui.postDelayed(() -> {
@@ -177,19 +298,20 @@ final class JarvisCoordinator {
                     "Do not claim work has finished. Use your own fresh wording; avoid repetitive status phrases.");
             }
         }, 12000L);
-        executor.submit(instruction,new JarvisEngineClient.Callback() {
+        jobWorker.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 workStage=stage;
                 if(enabled) events.onMilestone("Subagent: "+stage);
             }
             @Override public void onResult(String result) {
-                if(revision==workRevision) {
-                    activeWork="";
+                if(instruction.equals(projectJobs.get(jobProject))) {
+                    projectJobs.remove(jobProject);
+                    if(jobProject.equals(project))activeWork="";
                     workStage="completed";
-                    registry.updateProject(project,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
+                    registry.updateProject(jobProject,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
                 }
                 if(enabled) {
-                    events.onMilestone("Subagent completed");
+                    events.onMilestone("Project "+jobProject+" completed");
                     sayWithDialogue("WORKER RESULT. Speak directly to the human, honestly and briefly. "+
                         "Mention the result, important limitation and one useful next step. "+
                         "Never read raw logs or reasoning. Result: "+result);
@@ -198,6 +320,8 @@ final class JarvisCoordinator {
             @Override public void onError(String diagnostic) {
                 workStage="error";
                 if(enabled) {
+                    projectJobs.remove(jobProject);
+                    if(jobProject.equals(project))activeWork="";
                     events.onError("Subagent: "+diagnostic);
                     sayWithDialogue("A delegated task failed: "+diagnostic+
                         ". Explain the failure briefly and naturally, without claiming success.");
@@ -209,6 +333,9 @@ final class JarvisCoordinator {
     void close() {
         enabled=false;
         dialogue.close();
-        executor.close();
+        urgentDialogue.close();
+        previewDialogue.close();
+        for(JarvisEngineClient worker:projectWorkers.values())worker.close();
+        projectWorkers.clear();
     }
 }

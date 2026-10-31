@@ -156,6 +156,9 @@ final class JarvisStreamingStt {
             boolean hasSpeech=false;
             boolean wasPaused=false;
             int activeFrames=0;
+            double ambientNoise=.006;
+            long lastCommitAt=0L;
+            String lastCommitted="";
             while(running && !closed) {
                 int n=recorder.read(pcm,0,pcm.length,AudioRecord.READ_BLOCKING);
                 if(n<=0) {
@@ -185,7 +188,10 @@ final class JarvisStreamingStt {
                 long now=SystemClock.elapsedRealtime();
                 // RMS is a coarse speech activity signal. It does not itself
                 // terminate utterances; recognized text + stability are required.
-                boolean activeAudio=rms>.018;
+                // Track ambient sound rather than treating every loud frame as speech.
+                if(!hasSpeech && rms<ambientNoise*2.5)
+                    ambientNoise=.985*ambientNoise+.015*rms;
+                boolean activeAudio=rms>Math.max(.012,ambientNoise*3.0);
                 if(activeAudio)activeFrames++;else activeFrames=Math.max(0,activeFrames-1);
                 if(activeFrames>=3) {
                     if(!hasSpeech) {startedUtterance=now;emitState("hearing");}
@@ -201,10 +207,8 @@ final class JarvisStreamingStt {
                     lastPartial=partial;
                     if (!partial.isEmpty()) {
                         lastTextChange=now;
-                        // New decoded words override quiet microphone RMS.
-                        hasSpeech=true;
-                        if (startedUtterance==0L) startedUtterance=now;
-                        lastSpeech=now;
+                        // A language model may hallucinate text from background noise.
+                        // Text alone is NOT evidence that human speech occurred.
                     }
                     if(now-lastPartialUpdate>180 && !partial.isEmpty()) {
                         String visible=partial;
@@ -225,26 +229,32 @@ final class JarvisStreamingStt {
                 long quiet=now-lastSpeech;
                 long textIdle=lastTextChange==0L?0L:now-lastTextChange;
                 boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                boolean meaningful=partial.split("\\s+").length>=2;
+                boolean meaningful=partial.split("\\s+").length>=2 || partial.matches("(?i)^(hello|jarvis|status|stop|pause|resume|continue|yes|no|okay)[.!?]?$");
                 // Avoid promoting random decoded noise to a user command.
                 // Speech energy must have been present for multiple frames.
-                boolean speechObserved=activeFrames>=3 || now-lastSpeech<2500 && lastSpeech>0;
-                boolean nativeEndpoint=recognizer.isEndpoint(stream);
+                boolean speechObserved=hasSpeech && startedUtterance>0L;
+                // Native endpoint is advisory only; dialogue turn control uses silence and text stability.
                 // Stop waiting forever when microphone noise keeps the crude
                 // energy detector active. Require stable recognized text too.
-                long quietLimit=incomplete?2800:1400;
-                long stuckLimit=incomplete?5500:2500;
-                boolean endOfTurn=meaningful && speechObserved && stable>=3 &&
-                    (nativeEndpoint && textIdle>=350 ||
-                     quiet>=quietLimit && textIdle>=650 ||
-                     textIdle>=stuckLimit);
+                long quietLimit=incomplete?4200:2500;
+                long stuckLimit=incomplete?6500:4200;
+                // Ignore premature acoustic endpoints. A short pause after
+                // "I want to build a website" is not an instruction boundary.
+                boolean endOfTurn=meaningful && speechObserved && stable>=5 &&
+                    (quiet>=quietLimit && textIdle>=1600 ||
+                     textIdle>=stuckLimit && quiet>=900);
                 if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
                     // Immediately reset the utterance, keeping the microphone
                     // open and decoding during dialogue/worker processing.
                     recognizer.reset(stream);
                     hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
-                    ui.post(()->events.onFinal(utterance));
+                    // Avoid re-sending a recognizer loop that repeated identical audio.
+                    if(!utterance.equalsIgnoreCase(lastCommitted) || now-lastCommitAt>3500) {
+                        lastCommitted=utterance;
+                        lastCommitAt=now;
+                        ui.post(()->events.onFinal(utterance));
+                    }
                     emitState("listening");
                 }
             }
