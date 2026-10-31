@@ -152,6 +152,29 @@ public final class OpenCodeWebService extends Service {
         return START_STICKY;
     }
 
+    /** Install the built-in OpenCode agent as a real agent definition before serving. */
+    private void installJarvisAgent() throws Exception {
+        File destination = new File(HOME, ".config/opencode/agents/jarvis.md");
+        File folder = destination.getParentFile();
+        if (!folder.isDirectory() && !folder.mkdirs())
+            throw new java.io.IOException("Cannot create OpenCode agents directory");
+        File partial = new File(folder, "jarvis.md.partial");
+        try(InputStream in = getAssets().open("jarvis-agent.md");
+            FileOutputStream out = new FileOutputStream(partial)) {
+            byte[] data = new byte[8192];
+            int n;
+            while((n = in.read(data)) != -1) out.write(data, 0, n);
+            out.getFD().sync();
+        } catch(Exception failure) {
+            partial.delete();
+            throw failure;
+        }
+        if(destination.exists() && !destination.delete())
+            throw new java.io.IOException("Cannot update Jarvis agent");
+        if(!partial.renameTo(destination))
+            throw new java.io.IOException("Cannot install Jarvis OpenCode agent");
+    }
+
     private void runEngine() {
         try {
             protectBackground();
@@ -161,6 +184,7 @@ public final class OpenCodeWebService extends Service {
             if (android.system.Os.sysconf(android.system.OsConstants._SC_PAGESIZE) != 4096)
                 throw new IllegalStateException(getString(R.string.oc_pagesize_error));
             OpenCodeRuntime.install(this);
+            installJarvisAgent();
             state = "starting";
             detail = "";
             File binary = new File(PREFIX, "bin/opencode");
