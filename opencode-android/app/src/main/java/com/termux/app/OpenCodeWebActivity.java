@@ -232,6 +232,7 @@ public final class OpenCodeWebActivity extends Activity {
             "Primary speech engine: " + (preferPocket ? "Pocket TTS INT8 (native offline)" : "Android TTS"),
             "Choose reference WAV (voice cloning)",
             "Pocket TTS speaking speed",
+            "Jarvis fast dialogue model",
             "Preview Jarvis voice",
             "Android fallback TTS engine",
             "Android fallback voice",
@@ -249,15 +250,39 @@ public final class OpenCodeWebActivity extends Activity {
                         break;
                     case 1: choosePocketReference(); break;
                     case 2: choosePocketSpeed(); break;
-                    case 3: if (coordinator != null) coordinator.activate(); break;
-                    case 4: chooseTtsEngine(); break;
-                    case 5: chooseInstalledVoice(); break;
-                    case 6:
+                    case 3: chooseJarvisFastModel(); break;
+                    case 4: if (coordinator != null) coordinator.activate(); break;
+                    case 5: chooseTtsEngine(); break;
+                    case 6: chooseInstalledVoice(); break;
+                    case 7:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
                         catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
                         break;
                 }
             }).setNegativeButton("Close", null).show();
+    }
+
+    private void chooseJarvisFastModel() {
+        android.widget.EditText entry=new android.widget.EditText(this);
+        entry.setSingleLine(true);
+        entry.setHint("provider/model");
+        entry.setText(getSharedPreferences("jarvis_dialogue", MODE_PRIVATE)
+            .getString("model", ""));
+        new AlertDialog.Builder(this)
+            .setTitle("Jarvis fast conversational model")
+            .setMessage("Choose a lightweight non-thinking model already configured in OpenCode. Empty uses OpenCode's default. Restart the conversation to apply.")
+            .setView(entry)
+            .setPositiveButton("Save", (dialog,which)-> {
+                String model=entry.getText().toString().trim();
+                if(!model.isEmpty() && !model.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+")) {
+                    if(dashboard!=null)dashboard.addEvent("Invalid model ID; use provider/model");
+                    return;
+                }
+                getSharedPreferences("jarvis_dialogue",MODE_PRIVATE).edit()
+                    .putString("model",model).apply();
+                if(dashboard!=null)dashboard.addEvent("Fast model saved; re-open Jarvis to apply");
+            })
+            .setNegativeButton("Cancel",null).show();
     }
 
     private static final int PICK_REFERENCE_AUDIO = 4196;
