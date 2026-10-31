@@ -59,9 +59,9 @@ final class JarvisMicroTurnController {
         if(value==null)return false;
         String v=value.trim();
         if(v.length()<5 || !v.matches(".*[a-zA-Z].*"))return false;
-        if(v.matches("(?i)^(uh+|um+|hmm+|ah+|oh+|you|the|a|an|and|or|to|of|it|is|i|okay)$"))return false;
+        if(v.matches("(?i)^(uh+|um+|hmm+|ah+|oh+|you|the|a|an|and|or|to|of|it|is|i)$"))return false;
         String[] words=v.split("\\s+");
-        return words.length>=2 || v.matches("(?i)^(stop|pause|cancel|hello|jarvis|yes|no|continue|resume|status)$");
+        return words.length>=2 || v.matches("(?i)^(stop|pause|cancel|hello|jarvis|yes|no|okay|continue|resume|status)$");
     }
     synchronized boolean hasMeaningfulSpeech(){return qualified;}
     synchronized void reset(){hypothesis="";qualified=false;changedAt=SystemClock.elapsedRealtime();}
