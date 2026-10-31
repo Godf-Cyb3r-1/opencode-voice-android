@@ -152,75 +152,114 @@ final class JarvisPocketVoice {
         worker.execute(() -> playPhrases(text, id, ticket, true));
     }
 
+    /** Synthesis and playback run in parallel with one continuous AudioTrack.
+     * Queue capacity 2 bounds RAM; playback never waits for a new AudioTrack.
+     */
     private void playPhrases(String text, String id, int ticket, boolean announceStart) {
+        final java.util.concurrent.ArrayBlockingQueue<GeneratedAudio> queue=
+            new java.util.concurrent.ArrayBlockingQueue<>(2);
+        final java.util.concurrent.atomic.AtomicReference<Throwable> playbackFailure=
+            new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicBoolean producerDone=
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread output=new Thread(() -> {
+            AudioTrack track=null;
+            long framesWritten=0;
+            int sampleRate=0;
             try {
-                if (ticket!=generation.get() || closed) return;
-                if (announceStart) main.post(()->events.started(id));
-                for (String phrase:JarvisSpeechStyle.chunks(text)) {
-                    if (closed || ticket!=generation.get()) return;
-                    GenerationConfig cfg=new GenerationConfig();
-                    cfg.setSpeed(speed);
-                    cfg.setNumSteps(5);
-                    String reference = referenceFile;
-                    if (reference == null || !new File(reference).isFile())
-                        throw new IllegalStateException("Reference WAV missing");
-                    WaveReader ref = new WaveReader(reference);
-                    cfg.setReferenceAudio(ref.getSamples());
-                    cfg.setReferenceSampleRate(ref.getSampleRate());
-                    Map<String,String> extra = new HashMap<>();
-                    extra.put("temperature", "0.7");
-                    extra.put("chunk_size", "15");
-                    cfg.setExtra(extra);
-                    GeneratedAudio audio=model.generateWithConfigAndCallback(phrase,cfg,samples -> 1);
-                    float[] samples=audio.getSamples();
-                    int sampleRate=audio.getSampleRate();
-                    if (samples==null || samples.length==0) throw new IllegalStateException("Kokoro produced empty audio");
+                while(!closed && ticket==generation.get()) {
+                    GeneratedAudio chunk=queue.poll(100,java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if(chunk==null) {
+                        if(producerDone.get() && queue.isEmpty())break;
+                        continue;
+                    }
+                    float[] samples=chunk.getSamples();
+                    if(samples==null || samples.length==0)continue;
+                    int rate=chunk.getSampleRate();
+                    if(track==null) {
+                        sampleRate=rate;
+                        int min=AudioTrack.getMinBufferSize(rate,
+                            AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
+                        if(min<=0)throw new IllegalStateException("AudioTrack unavailable");
+                        track=new AudioTrack.Builder()
+                            .setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                            .setAudioFormat(new AudioFormat.Builder()
+                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .setSampleRate(rate)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                            .setTransferMode(AudioTrack.MODE_STREAM)
+                            .setBufferSizeInBytes(Math.max(min,32768)).build();
+                        synchronized(this){player=track;}
+                        track.play();
+                    }
+                    if(rate!=sampleRate)throw new IllegalStateException("TTS sample rate changed");
                     short[] pcm=new short[samples.length];
-                    for(int i=0;i<samples.length;i++) {
-                        float v=Math.max(-1f,Math.min(1f,samples[i]));
-                        pcm[i]=(short)Math.round(v*32767f);
+                    for(int i=0;i<samples.length;i++)
+                        pcm[i]=(short)Math.round(Math.max(-1f,Math.min(1f,samples[i]))*32767);
+                    int pos=0;
+                    while(pos<pcm.length && !closed && ticket==generation.get()) {
+                        int n=track.write(pcm,pos,Math.min(4096,pcm.length-pos));
+                        if(n<=0)throw new IllegalStateException("Audio write failed "+n);
+                        pos+=n;
                     }
-                    int minBuffer=AudioTrack.getMinBufferSize(sampleRate,
-                        AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
-                    if(minBuffer<=0)throw new IllegalStateException("Audio playback unsupported");
-                    AudioTrack track=new AudioTrack.Builder()
-                        .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                        .setAudioFormat(new AudioFormat.Builder()
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setSampleRate(sampleRate)
-                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                        .setTransferMode(AudioTrack.MODE_STREAM)
-                        .setBufferSizeInBytes(Math.max(minBuffer,8192)).build();
-                    synchronized(this){player=track;}
-                    track.play();
-                    int at=0;
-                    while(at<pcm.length && !closed && ticket==generation.get()) {
-                        int n=track.write(pcm,at,Math.min(4096,pcm.length-at));
-                        if(n<=0)throw new IllegalStateException("AudioTrack write failed: "+n);
-                        at+=n;
-                    }
-                    if(ticket==generation.get() && !closed) {
-                        long deadline=android.os.SystemClock.elapsedRealtime()
-                            + (long)(1000.0*pcm.length/sampleRate)+2000;
-                        // Wait for the actual playback head instead of sleeping for
-                        // a second full duration after the blocking PCM writes.
-                        while(ticket==generation.get() && !closed
-                                && track.getPlaybackHeadPosition()<pcm.length
-                                && android.os.SystemClock.elapsedRealtime()<deadline) {
-                            Thread.sleep(25);
-                        }
-                    }
-                    synchronized(this){if(player==track)player=null;}
-                    try {track.pause();track.flush();}catch(Exception ignored){}
+                    framesWritten+=pos;
+                }
+                if(track!=null && ticket==generation.get() && !closed) {
+                    long deadline=android.os.SystemClock.elapsedRealtime()
+                        + (long)(1000.0*framesWritten/sampleRate)+2000;
+                    while(!closed && ticket==generation.get()
+                            && track.getPlaybackHeadPosition()<framesWritten
+                            && android.os.SystemClock.elapsedRealtime()<deadline)
+                        Thread.sleep(25);
+                }
+            }catch(Throwable failure) {playbackFailure.set(failure);}
+            finally {
+                synchronized(this){if(player==track)player=null;}
+                if(track!=null) {
+                    try{track.pause();track.flush();}catch(Exception ignored){}
                     track.release();
                 }
-                if(!closed && ticket==generation.get() && announceStart) main.post(()->events.completed(id));
-            } catch(Throwable e) {
-                String reason=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
-                main.post(()->events.failed(id,reason));
             }
+        },"jarvis-audio-playback");
+        output.start();
+        try {
+            if(announceStart)main.post(()->events.started(id));
+            for(String phrase:JarvisSpeechStyle.chunks(text)) {
+                if(closed || ticket!=generation.get())break;
+                GenerationConfig cfg=new GenerationConfig();
+                cfg.setSpeed(speed);
+                cfg.setNumSteps(5);
+                String reference=referenceFile;
+                if(reference==null || !new File(reference).isFile())
+                    throw new IllegalStateException("Reference WAV missing");
+                WaveReader ref=new WaveReader(reference);
+                cfg.setReferenceAudio(ref.getSamples());
+                cfg.setReferenceSampleRate(ref.getSampleRate());
+                Map<String,String> extra=new HashMap<>();
+                extra.put("temperature","0.7");
+                extra.put("chunk_size","15");
+                cfg.setExtra(extra);
+                GeneratedAudio audio=model.generateWithConfigAndCallback(phrase,cfg,samples -> 1);
+                if(audio.getSamples()==null || audio.getSamples().length==0)
+                    throw new IllegalStateException("Neural TTS produced empty audio");
+                while(!closed && ticket==generation.get()
+                      && playbackFailure.get()==null
+                      && !queue.offer(audio,100,java.util.concurrent.TimeUnit.MILLISECONDS)){}
+                if(playbackFailure.get()!=null)throw playbackFailure.get();
+            }
+            producerDone.set(true);
+            output.join();
+            if(playbackFailure.get()!=null)throw playbackFailure.get();
+            if(!closed && ticket==generation.get() && announceStart)
+                main.post(()->events.completed(id));
+        }catch(Throwable failure) {
+            producerDone.set(true);
+            output.interrupt();
+            String reason=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();
+            if(ticket==generation.get())main.post(()->events.failed(id,reason));
+        }
     }
 
     void stop() {

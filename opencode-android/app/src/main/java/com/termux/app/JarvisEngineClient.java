@@ -43,33 +43,29 @@ final class JarvisEngineClient {
         this.projectKey=projectKey;
         this.registry=new JarvisSessionRegistry(context);
         this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
-        this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
+        this.preferredModel = context.getSharedPreferences(dialogueOnly ? "jarvis_dialogue" : "jarvis_work", Context.MODE_PRIVATE)
             .getString("model", "");
     }
 
-    void submit(String instruction, Callback callback) {
+    void submit(String instruction, Callback callback) { submit(instruction, null, callback); }
+
+    void submit(String instruction, String systemContext, Callback callback) {
         workers.execute(() -> {
             try {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
-                if (sessionId == null) {
+                if (sessionId == null || sessionId.trim().isEmpty()) {
                     JSONObject create = new JSONObject().put("messages", new JSONArray());
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
                     if(dialogueOnly)registry.setDialogueId(sessionId);
                     else registry.setWorkId(projectKey,sessionId);
-                    if (dialogueOnly && !preferredModel.isEmpty()) {
-                        int slash=preferredModel.indexOf('/');
-                        if (slash<=0 || slash==preferredModel.length()-1)
-                            throw new IllegalArgumentException("Fast model must be provider/model");
-                        JSONObject model=new JSONObject().put("providerID",preferredModel.substring(0,slash))
-                            .put("id",preferredModel.substring(slash+1));
-                        http("POST", "/api/session/" + Uri.encode(sessionId) + "/model",
-                            new JSONObject().put("model",model),12000);
-                    }
+
                 }
+                if(sessionId==null || sessionId.trim().isEmpty())
+                    throw new IllegalStateException("OpenCode session ID missing; refusing to send prompt");
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -78,16 +74,41 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text",
-                    dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
-                    + "\n\nTask: " + instruction
-                    + "\n\nAfter attempting actions, give one concise spoken status update.");
+                JSONObject prompt = new JSONObject().put("parts",new JSONArray()
+                    .put(new JSONObject().put("type","text").put("text",instruction)));
+                String system = dialogueOnly ? systemContext : JarvisSpeechStyle.instruction()
+                    + "\nAfter attempting actions, give one concise spoken status update.";
+                if(system!=null && !system.trim().isEmpty()) prompt.put("system",system);
+                if(!preferredModel.isEmpty()) {
+                    int separator=preferredModel.indexOf('/');
+                    if(separator>0 && separator<preferredModel.length()-1)
+                        prompt.put("model",new JSONObject()
+                            .put("providerID",preferredModel.substring(0,separator))
+                            .put("modelID",preferredModel.substring(separator+1)));
+                }
 
-                // Keep dialogue on a separate session without requiring a preinstalled agent name.
+                // Jarvis dialogue must never execute coding tools. Work sessions retain tools.
+                if(dialogueOnly) {
+                    JSONObject disabled=new JSONObject();
+                    for(String tool : new String[]{"bash","read","write","edit","apply_patch","glob","grep","list","webfetch","websearch","task","todowrite","todoread","question","skill"})
+                        disabled.put(tool,false);
+                    prompt.put("tools",disabled);
+                }
                 stage(callback, "sending prompt to OpenCode");
-                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                String target="/api/session/" + Uri.encode(sessionId);
+                try {
+                    // Nonblocking OpenCode submission: speech is not stalled by
+                    // execution-time HTTP reads. Same session retains context.
+                    http("POST",target+"/prompt_async",prompt,12000);
+                } catch(IllegalStateException unsupported) {
+                    // Do not silently run a second prompt after a timeout, as
+                    // the first could already be executing.
+                    String reason=unsupported.getMessage()==null?"":unsupported.getMessage();
+                    if(!reason.contains("HTTP 404") && !reason.contains("HTTP 405"))throw unsupported;
+                    http("POST",target+"/prompt",prompt,dialogueOnly?25000:90000);
+                }
                 stage(callback, "waiting for model response");
-                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
+                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 45_000L : 120_000L);
                 long firstStableAt = 0L;
                 String latest = "";
                 int stable = 0;
