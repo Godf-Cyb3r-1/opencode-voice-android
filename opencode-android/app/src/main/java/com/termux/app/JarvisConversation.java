@@ -16,6 +16,8 @@ final class JarvisConversation {
     private final Handler ui=new Handler(Looper.getMainLooper());
     private final JarvisMicroTurnController turns;
     private JarvisStreamingStt stt;
+    private JarvisAndroidStt androidStt;
+    private boolean useAndroid;
     private boolean active;
     private final Runnable clock=new Runnable(){
         @Override public void run(){
@@ -42,6 +44,15 @@ final class JarvisConversation {
     private void start(){
         active=true;
         turns.start();
+        useAndroid=activity.getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true);
+        if(useAndroid){
+            androidStt=new JarvisAndroidStt(activity,new JarvisAndroidStt.Events(){
+                @Override public void onState(String state){if(active)callbacks.onState(state);}
+                @Override public void onPartial(String text){if(active)turns.update(text);}
+                @Override public void onFailure(String reason){if(active)callbacks.onState("Android ASR: "+reason);}
+            });
+            androidStt.start();
+        } else {
         stt=new JarvisStreamingStt(activity,new JarvisStreamingStt.Events(){
             @Override public void onState(String state){if(active)callbacks.onState(state);}
             @Override public void onPartial(String text){if(active)turns.update(text);}
@@ -49,6 +60,7 @@ final class JarvisConversation {
             @Override public void onFailure(String reason){if(active)callbacks.onState("ASR error: "+reason);}
         });
         stt.start();
+        }
         ui.post(clock);
         callbacks.onState("listening");
     }
@@ -57,10 +69,11 @@ final class JarvisConversation {
         turns.stop();
         ui.removeCallbacks(clock);
         if(stt!=null){stt.close();stt=null;}
+        if(androidStt!=null){androidStt.close();androidStt=null;}
         callbacks.onState("off");
     }
     void pauseDuringSpeech(){} // Duplex: input continues during playback.
     void onAnswerSpoken(){if(active)callbacks.onState("listening");}
     void onAnswerUnavailable(){if(active)callbacks.onState("listening");}
-    void onPermissionResult(boolean granted){if(active && granted && stt!=null)stt.start();}
+    void onPermissionResult(boolean granted){if(active && granted){if(stt!=null)stt.start();if(androidStt!=null)androidStt.start();}}
 }
