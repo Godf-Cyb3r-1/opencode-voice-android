@@ -531,8 +531,14 @@ public final class OpenCodeWebActivity extends Activity {
             }
             @Override public void onError(String diagnostic) {
                 jarvisAnswerPending = false;
-                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("listening");}
-                if (jarvis != null) jarvis.onAnswerUnavailable();
+                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("ready");}
+                if (jarvis != null && jarvis.isActive()) {
+                    String summary=diagnostic==null?"Unknown error":diagnostic;
+                    summary=summary.replaceAll("https?://\\S+", "the service").replaceAll("[\\r\\n]+", " ");
+                    if(summary.length()>180)summary=summary.substring(0,180);
+                    speakJarvis("I encountered an error. "+summary, "jarvis-error");
+                    jarvis.onAnswerUnavailable();
+                }
             }
         });
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
