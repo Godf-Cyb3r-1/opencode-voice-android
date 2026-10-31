@@ -23,6 +23,8 @@ final class JarvisCoordinator {
 
     private final JarvisEngineClient dialogue;
     private final JarvisEngineClient urgentDialogue;
+    private final JarvisEngineClient previewDialogue;
+    private long lastPreviewAt;
     private String lastUrgentCandidate = "";
     private int urgentObservations;
     private final AtomicInteger urgentEpoch = new AtomicInteger();
@@ -50,6 +52,7 @@ final class JarvisCoordinator {
         if(project.isEmpty())project="general-work";
         dialogue = new JarvisEngineClient(context, true);
         urgentDialogue = new JarvisEngineClient(context, true, "urgent-dialogue");
+        previewDialogue = new JarvisEngineClient(context, true, "preview-dialogue");
         executor = new JarvisEngineClient(context, false,project);
         projectWorkers.put(project,executor);
         this.events=events;
@@ -79,6 +82,40 @@ final class JarvisCoordinator {
      * Preview-only urgent handling. Partial hypotheses NEVER delegate worker jobs.
      * The model generates any actual words; there are no canned acknowledgments.
      */
+    /** Occasional model-authored backchannel, never a work prompt or canned filler. */
+    void onLongInterimSpeech(String hypothesis) {
+        if(!enabled || hypothesis==null)return;
+        String value=hypothesis.trim();
+        if(value.length()<90 || value.split("\\s+").length<14)return;
+        if(value.matches("(?s).*[.!?]$"))return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(now-lastPreviewAt<20000L)return;
+        lastPreviewAt=now;
+        final int activeTurn=speechEpoch.get();
+        previewDialogue.submit("PARTIAL HUMAN SPEECH (user still speaking): "+value+
+            "\\nEvaluate whether any spoken backchannel is helpful right now. "
+            +"Usually remain silent. If meaningful, choose a unique very short "
+            +"natural acknowledgment suited to their intent and emotion. "
+            +"Never delegate or treat the partial speech as a final instruction. "
+            +"Return only the JSON with say empty when silence is appropriate.",
+            new JarvisEngineClient.Callback() {
+                @Override public void onStage(String stage) {}
+                @Override public void onResult(String response) {
+                    if(!enabled || speechEpoch.get()!=activeTurn)return;
+                    try {
+                        JSONObject output=new JSONObject(response.trim());
+                        String say=output.optString("say","").trim();
+                        if(!say.isEmpty() && say.split("\\s+").length<=8)
+                            events.onSpeech(say,"jarvis-backchannel-"+activeTurn);
+                    } catch(Exception ignored) {}
+                }
+                @Override public void onError(String error) {
+                    if(enabled && speechEpoch.get()==activeTurn)
+                        events.onMilestone("Backchannel unavailable; continuing to listen");
+                }
+            });
+    }
+
     void onInterimSpeech(String hypothesis) {
         if(!enabled || hypothesis==null)return;
         String candidate=hypothesis.trim().replaceAll("\\s+"," ");
@@ -297,6 +334,7 @@ final class JarvisCoordinator {
         enabled=false;
         dialogue.close();
         urgentDialogue.close();
+        previewDialogue.close();
         for(JarvisEngineClient worker:projectWorkers.values())worker.close();
         projectWorkers.clear();
     }
