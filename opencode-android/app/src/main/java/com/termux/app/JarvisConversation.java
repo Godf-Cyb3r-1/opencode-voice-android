@@ -16,7 +16,7 @@ final class JarvisConversation {
     private final JarvisStreamingStt stt;
     private final Callbacks callbacks;
     private boolean active;
-    private boolean awaitingResponse;
+    private boolean speaking;
 
     JarvisConversation(Activity activity, Callbacks callbacks) {
         this.callbacks=callbacks;
@@ -25,13 +25,12 @@ final class JarvisConversation {
                 if(active) callbacks.onState(state);
             }
             @Override public void onPartial(String partial) {
-                if(active && !awaitingResponse) callbacks.onPartial(partial);
+                if(active) callbacks.onPartial(partial);
             }
             @Override public void onFinal(String transcript) {
-                if(!active || awaitingResponse) return;
-                awaitingResponse=true;
-                callbacks.onState("thinking");
+                if(!active) return;
                 callbacks.onTranscript(transcript);
+                callbacks.onState("listening");
             }
             @Override public void onFailure(String reason) {
                 callbacks.onState("speech error: "+reason);
@@ -43,14 +42,14 @@ final class JarvisConversation {
     void toggle() { if(active)stop();else {active=true;stt.start();} }
     void stop() {
         active=false;
-        awaitingResponse=false;
+        speaking=false;
         stt.stop();
         callbacks.onState("off");
     }
-    void pauseDuringSpeech() { if(active) stt.pauseForResponse(); }
+    void pauseDuringSpeech() { speaking=true; /* Keep speech recognition active for barge-in. */ }
     void onAnswerSpoken() {
         awaitingResponse=false;
-        if(active){stt.resumeListening();callbacks.onState("listening");}
+        if(active){callbacks.onState("listening");}
     }
     void onAnswerUnavailable() {
         awaitingResponse=false;
