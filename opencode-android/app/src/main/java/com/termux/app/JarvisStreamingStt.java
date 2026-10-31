@@ -47,6 +47,7 @@ final class JarvisStreamingStt {
     private volatile boolean running;
     private volatile boolean pausedForResponse;
     private volatile boolean closed;
+    private volatile boolean resetRequested;
     private AudioRecord microphone;
     private AcousticEchoCanceler echoCanceler;
     private OnlineRecognizer recognizer;
@@ -67,6 +68,7 @@ final class JarvisStreamingStt {
         worker.execute(this::run);
     }
 
+    void requestReset() {resetRequested=true;}
     void pauseForResponse() { pausedForResponse=true; }
     void resumeListening() { pausedForResponse=false; }
     void stop() {
@@ -115,7 +117,7 @@ final class JarvisStreamingStt {
         OnlineRecognizerConfig config=OnlineRecognizerConfig.builder()
             .setOnlineModelConfig(model)
             .setDecodingMethod("greedy_search")
-            .setEnableEndpoint(true)
+            .setEnableEndpoint(false)
             .build();
         recognizer=new OnlineRecognizer(config);
         stream=recognizer.createStream();
@@ -192,6 +194,7 @@ final class JarvisStreamingStt {
                     hasSpeech=true;
                     lastSpeech=now;
                 }
+                if(resetRequested){recognizer.reset(stream);resetRequested=false;lastPartial="";}
                 stream.acceptWaveform(samples,RATE);
                 while(recognizer.isReady(stream)) recognizer.decode(stream);
                 String partial=recognizer.getResult(stream).getText().trim();
@@ -212,41 +215,9 @@ final class JarvisStreamingStt {
                         lastPartialUpdate=now;
                     }
                 }else if(!partial.isEmpty())stable++;
-                if(!hasSpeech || partial.isEmpty()) {
-                    // An endpoint can be signalled without a viable transcript.
-                    // Recycle the acoustic state rather than staying in HEARING.
-                    if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
-                        recognizer.reset(stream);
-                        activeFrames=0;hasSpeech=false;startedUtterance=0L;
-                        emitState("listening");
-                    }
-                    continue;
-                }
-                long quiet=now-lastSpeech;
-                long textIdle=lastTextChange==0L?0L:now-lastTextChange;
-                boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                boolean meaningful=partial.split("\\s+").length>=2;
-                // Avoid promoting random decoded noise to a user command.
-                // Speech energy must have been present for multiple frames.
-                boolean speechObserved=activeFrames>=3 || now-lastSpeech<2500 && lastSpeech>0;
-                boolean nativeEndpoint=recognizer.isEndpoint(stream);
-                // Stop waiting forever when microphone noise keeps the crude
-                // energy detector active. Require stable recognized text too.
-                long quietLimit=incomplete?2800:1400;
-                long stuckLimit=incomplete?5500:2500;
-                boolean endOfTurn=meaningful && speechObserved && stable>=3 &&
-                    (nativeEndpoint && textIdle>=350 ||
-                     quiet>=quietLimit && textIdle>=650 ||
-                     textIdle>=stuckLimit);
-                if(endOfTurn && now-startedUtterance>=500) {
-                    final String utterance=partial;
-                    // Immediately reset the utterance, keeping the microphone
-                    // open and decoding during dialogue/worker processing.
-                    recognizer.reset(stream);
-                    hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
-                    ui.post(()->events.onFinal(utterance));
-                    emitState("listening");
-                }
+                // Micro-turn controller owns turn decisions; no native VAD/endpoint
+                // or RMS-based finalization is used here.
+
             }
         }catch(Throwable failure) {
             String reason=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();

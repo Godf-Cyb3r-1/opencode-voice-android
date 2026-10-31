@@ -255,7 +255,8 @@ public final class OpenCodeWebActivity extends Activity {
             "Preview Jarvis voice",
             "Android fallback TTS engine",
             "Android fallback voice",
-            "Android TTS settings"
+            "Android TTS settings",
+            "Speech recognizer: " + (getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true) ? "Android high accuracy" : "Offline Zipformer")
         };
         new AlertDialog.Builder(this).setTitle("Jarvis • Voice Studio")
             .setItems(options, (dialog, choice) -> {
@@ -273,6 +274,11 @@ public final class OpenCodeWebActivity extends Activity {
                     case 4: if (coordinator != null) coordinator.activate(); break;
                     case 5: chooseTtsEngine(); break;
                     case 6: chooseInstalledVoice(); break;
+                    case 8:
+                        boolean selected=getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true);
+                        getSharedPreferences("jarvis_asr",0).edit().putBoolean("prefer_android",!selected).apply();
+                        if(dashboard!=null)dashboard.addEvent("ASR  •  Switch takes effect after restarting Jarvis listening.");
+                        break;
                     case 7:
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
                         catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
@@ -531,8 +537,14 @@ public final class OpenCodeWebActivity extends Activity {
             }
             @Override public void onError(String diagnostic) {
                 jarvisAnswerPending = false;
-                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("listening");}
-                if (jarvis != null) jarvis.onAnswerUnavailable();
+                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("ready");}
+                if (jarvis != null && jarvis.isActive()) {
+                    String summary=diagnostic==null?"Unknown error":diagnostic;
+                    summary=summary.replaceAll("https?://\\S+", "the service").replaceAll("[\\r\\n]+", " ");
+                    if(summary.length()>180)summary=summary.substring(0,180);
+                    speakJarvis("I encountered an error. "+summary, "jarvis-error");
+                    jarvis.onAnswerUnavailable();
+                }
             }
         });
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
@@ -548,6 +560,13 @@ public final class OpenCodeWebActivity extends Activity {
                 if(jarvisCurrentlySpeaking && !isAssistantEcho(partial) && partial.trim().split("\\s+").length>=2)
                     interruptJarvisSpeech();
                 if (dashboard != null) dashboard.showLiveTranscript(partial);
+            }
+            @Override public void onAction(String action) {
+                if(dashboard!=null)dashboard.addEvent("JARVIS  •  "+action);
+            }
+            @Override public void onIdle() {
+                if(coordinator!=null && !jarvisCurrentlySpeaking && !jarvisAnswerPending)
+                    coordinator.onListeningIdle();
             }
             @Override public void onState(String state) {
                 updateJarvisLabel(state);
@@ -1214,7 +1233,8 @@ public final class OpenCodeWebActivity extends Activity {
     @Override protected void onPause() {
         rememberRoute();
         pausedAt = android.os.SystemClock.elapsedRealtime();
-        if (jarvis != null && jarvis.isActive()) jarvis.stop();
+        // Keep the Jarvis session active when the app is backgrounded.
+        // OpenCodeWebService already owns the foreground engine notification.
         if (!rendererGone) web.onPause();
         super.onPause();
     }
