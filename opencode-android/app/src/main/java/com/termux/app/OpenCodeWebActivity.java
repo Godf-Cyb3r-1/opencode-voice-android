@@ -91,6 +91,24 @@ public final class OpenCodeWebActivity extends Activity {
         if (dashboard != null) dashboard.setVisibility(showEngineConsole ? View.GONE : View.VISIBLE);
     }
     private boolean jarvisAnswerPending;
+    private String lastJarvisSpoken = "";
+    private boolean jarvisCurrentlySpeaking;
+    private boolean isAssistantEcho(String heard) {
+        String text=heard==null?"":heard.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9 ]"," ").replaceAll("\\s+"," ").trim();
+        String spoken=lastJarvisSpoken.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9 ]"," ").replaceAll("\\s+"," ").trim();
+        if(text.length()<3)return true;
+        return !spoken.isEmpty() && (spoken.contains(text) || text.contains(spoken));
+    }
+    private void interruptJarvisSpeech() {
+        if (!jarvisCurrentlySpeaking) return;
+        jarvisCurrentlySpeaking=false;
+        jarvisAnswerPending=false;
+        if(speech!=null)speech.stop();
+        if(pocket!=null)pocket.stop();
+        if(coordinator!=null)coordinator.interrupt();
+        if(jarvis!=null)jarvis.onAnswerUnavailable();
+        if(dashboard!=null)dashboard.addEvent("BARGE-IN  •  User speech interrupted playback");
+    }
     private boolean jarvisNarrating;
     private void updateJarvisLabel(String state) {
         if (jarvisButton != null) {
@@ -152,7 +170,7 @@ public final class OpenCodeWebActivity extends Activity {
                     }
                     @Override public void onDone(String id) {
                         handler.post(() -> {
-                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
+                            if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisCurrentlySpeaking=false; jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
                             if ("oc-auto".equals(id) && jarvisNarrating && jarvis != null) {
                                 jarvisNarrating = false;
                                 jarvis.onAnswerSpoken();
@@ -193,6 +211,7 @@ public final class OpenCodeWebActivity extends Activity {
         if ("jarvis-native".equals(id) && jarvis != null) jarvis.pauseDuringSpeech();
         String spoken = JarvisSpeechStyle.prepare(text);
         if (spoken.isEmpty()) return;
+        if("jarvis-native".equals(id)) {lastJarvisSpoken=spoken;jarvisCurrentlySpeaking=true;}
         if (preferPocket && pocket != null && !pocketFailed) {
             if (pocket.isReady()) {
                 currentNeuralText=spoken;
@@ -511,18 +530,23 @@ public final class OpenCodeWebActivity extends Activity {
                 if (dashboard != null) dashboard.addEvent("JARVIS  •  " + stage);
             }
             @Override public void onError(String diagnostic) {
-                if (dashboard != null) dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);
+                jarvisAnswerPending = false;
+                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("listening");}
                 if (jarvis != null) jarvis.onAnswerUnavailable();
             }
         });
         jarvis = new JarvisConversation(this, new JarvisConversation.Callbacks() {
             @Override public void onTranscript(String transcript) {
+                if (jarvisCurrentlySpeaking && isAssistantEcho(transcript)) return;
+                if (jarvisCurrentlySpeaking) interruptJarvisSpeech();
                 jarvisAnswerPending = true;
                 pendingNarration = "";
                 if (dashboard != null) dashboard.addEvent("YOU  •  " + transcript);
                 if (coordinator != null) coordinator.onUserSaid(transcript);
             }
             @Override public void onPartial(String partial) {
+                if(jarvisCurrentlySpeaking && !isAssistantEcho(partial) && partial.trim().split("\\s+").length>=2)
+                    interruptJarvisSpeech();
                 if (dashboard != null) dashboard.showLiveTranscript(partial);
             }
             @Override public void onState(String state) {
