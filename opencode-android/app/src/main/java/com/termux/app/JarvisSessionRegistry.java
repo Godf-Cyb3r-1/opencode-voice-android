@@ -11,8 +11,8 @@ final class JarvisSessionRegistry {
     JarvisSessionRegistry(Context context) {
         store=context.getApplicationContext().getSharedPreferences("jarvis_sessions_v1",Context.MODE_PRIVATE);
     }
-    synchronized String dialogueId(){return store.getString("dialogue_id","");}
-    synchronized void setDialogueId(String id){store.edit().putString("dialogue_id",id).apply();}
+    synchronized String dialogueId(){return store.getString("dialogue_id_v2_tool_free","");}
+    synchronized void setDialogueId(String id){store.edit().putString("dialogue_id_v2_tool_free",id).apply();}
     synchronized String workId(String project){return store.getString("work_"+key(project),"");}
     synchronized void setWorkId(String project,String id){
         store.edit().putString("work_"+key(project),id).putString("current_project",project).apply();
@@ -24,7 +24,7 @@ final class JarvisSessionRegistry {
         store.edit().putString("summary_"+key(project),summary).putString("current_project",project).apply();
     }
     synchronized void clearStaleSession(boolean dialogue,String project){
-        if(dialogue)store.edit().remove("dialogue_id").apply();
+        if(dialogue)store.edit().remove("dialogue_id_v2_tool_free").apply();
         else store.edit().remove("work_"+key(project)).apply();
     }
     private static String key(String input){
