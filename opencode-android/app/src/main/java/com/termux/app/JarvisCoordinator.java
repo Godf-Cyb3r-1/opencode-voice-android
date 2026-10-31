@@ -93,7 +93,7 @@ final class JarvisCoordinator {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
             }
             @Override public void onResult(String response) {
-                if(!enabled || ticket!=speechEpoch.get())return;
+                if(!enabled || ticket!=speechEpoch.get()) {events.onMilestone("Discarded superseded dialogue "+ticket);return;}
                 String spoken=response;
                 String delegate="";
                 String mode="new";
@@ -121,7 +121,7 @@ final class JarvisCoordinator {
                 }
             }
             @Override public void onError(String diagnostic) {
-                if(enabled && ticket==speechEpoch.get()) events.onError("Dialogue: "+diagnostic);
+                if(enabled) events.onError("Dialogue request "+ticket+": "+diagnostic);
             }
         });
     }
