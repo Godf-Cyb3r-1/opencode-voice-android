@@ -11,6 +11,7 @@ final class JarvisConversation {
         void onState(String state);
         void onPartial(String text);
         void onIdle();
+        void onAction(String action);
     }
     private final Activity activity;
     private final Callbacks callbacks;
@@ -19,7 +20,7 @@ final class JarvisConversation {
     private JarvisStreamingStt stt;
     private JarvisAndroidStt androidStt;
     private boolean useAndroid;
-    private boolean active;
+    private volatile boolean active;
     private long lastActivity;
     private boolean idlePrompted;
     private final Runnable clock=new Runnable(){
@@ -27,7 +28,7 @@ final class JarvisConversation {
             if(!active)return;
             turns.tick();
             long now=android.os.SystemClock.elapsedRealtime();
-            if(!idlePrompted && now-lastActivity>=15000L){
+            if(!idlePrompted && !turns.hasMeaningfulSpeech() && now-lastActivity>=15000L){
                 idlePrompted=true;
                 callbacks.onIdle();
             }
@@ -43,6 +44,7 @@ final class JarvisConversation {
                 if(!active)return;
                 lastActivity=android.os.SystemClock.elapsedRealtime();
                 idlePrompted=false;
+                callbacks.onAction("Speech captured; interpreting request");
                 callbacks.onTranscript(text);
                 turns.reset();
                 if(stt!=null)stt.requestReset();
@@ -60,7 +62,7 @@ final class JarvisConversation {
         if(useAndroid){
             androidStt=new JarvisAndroidStt(activity,new JarvisAndroidStt.Events(){
                 @Override public void onState(String state){if(active)callbacks.onState(state);}
-                @Override public void onPartial(String text){if(active){turns.update(text);if(text!=null && !text.trim().isEmpty()){lastActivity=android.os.SystemClock.elapsedRealtime();idlePrompted=false;}}}
+                @Override public void onPartial(String text){if(active){turns.update(text);if(JarvisMicroTurnController.isMeaningful(text)){lastActivity=android.os.SystemClock.elapsedRealtime();idlePrompted=false;}}}
                 @Override public void onFailure(String reason){if(active)callbacks.onState("Android ASR: "+reason);}
             });
             androidStt.start();
