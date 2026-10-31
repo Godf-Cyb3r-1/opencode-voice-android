@@ -128,8 +128,9 @@ final class JarvisStreamingStt {
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
             if(minimum<=0)throw new IllegalStateException("Microphone format unsupported");
             boolean echoAvailable=AcousticEchoCanceler.isAvailable();
-            int inputSource=echoAvailable ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
-                : MediaRecorder.AudioSource.VOICE_RECOGNITION;
+            // VOICE_COMMUNICATION can heavily suppress or distort phonemes on
+            // vendor DSPs. Prefer unprocessed speech input for ASR.
+            int inputSource=MediaRecorder.AudioSource.VOICE_RECOGNITION;
             AudioRecord recorder=new AudioRecord(inputSource,RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
                 Math.max(minimum,FRAME*2*8));
@@ -225,12 +226,15 @@ final class JarvisStreamingStt {
                 long textIdle=lastTextChange==0L?0L:now-lastTextChange;
                 boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
                 boolean meaningful=partial.split("\\s+").length>=2;
+                // Avoid promoting random decoded noise to a user command.
+                // Speech energy must have been present for multiple frames.
+                boolean speechObserved=activeFrames>=3 || now-lastSpeech<2500 && lastSpeech>0;
                 boolean nativeEndpoint=recognizer.isEndpoint(stream);
                 // Stop waiting forever when microphone noise keeps the crude
                 // energy detector active. Require stable recognized text too.
                 long quietLimit=incomplete?2800:1400;
                 long stuckLimit=incomplete?5500:2500;
-                boolean endOfTurn=meaningful && stable>=3 &&
+                boolean endOfTurn=meaningful && speechObserved && stable>=3 &&
                     (nativeEndpoint && textIdle>=350 ||
                      quiet>=quietLimit && textIdle>=650 ||
                      textIdle>=stuckLimit);
