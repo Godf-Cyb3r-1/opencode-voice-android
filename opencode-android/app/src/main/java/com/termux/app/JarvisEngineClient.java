@@ -50,6 +50,15 @@ final class JarvisEngineClient {
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
+                    if (dialogueOnly && !preferredModel.isEmpty()) {
+                        int slash=preferredModel.indexOf('/');
+                        if (slash<=0 || slash==preferredModel.length()-1)
+                            throw new IllegalArgumentException("Fast model must be provider/model");
+                        JSONObject model=new JSONObject().put("providerID",preferredModel.substring(0,slash))
+                            .put("id",preferredModel.substring(slash+1));
+                        http("POST", "/api/session/" + Uri.encode(sessionId) + "/model",
+                            new JSONObject().put("model",model),12000);
+                    }
                 }
                 stage(callback, "executing");
                 String previous = "";
@@ -63,7 +72,7 @@ final class JarvisEngineClient {
                     dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
-                if (dialogueOnly && !preferredModel.isEmpty()) prompt.put("model", preferredModel);
+
                 // Keep dialogue on a separate session without requiring a preinstalled agent name.
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
