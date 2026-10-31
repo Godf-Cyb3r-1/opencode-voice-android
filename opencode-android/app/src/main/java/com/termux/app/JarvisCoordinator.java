@@ -22,6 +22,10 @@ final class JarvisCoordinator {
     }
 
     private final JarvisEngineClient dialogue;
+    private final JarvisEngineClient urgentDialogue;
+    private String lastUrgentCandidate = "";
+    private int urgentObservations;
+    private long lastUrgentAt;
     private JarvisEngineClient executor;
     private final java.util.Map<String,JarvisEngineClient> projectWorkers = new java.util.HashMap<>();
     private final java.util.Map<String,String> projectJobs = new java.util.HashMap<>();
@@ -44,6 +48,7 @@ final class JarvisCoordinator {
         project=registry.currentProject();
         if(project.isEmpty())project="general-work";
         dialogue = new JarvisEngineClient(context, true);
+        urgentDialogue = new JarvisEngineClient(context, true, "urgent-dialogue");
         executor = new JarvisEngineClient(context, false,project);
         projectWorkers.put(project,executor);
         this.events=events;
@@ -66,6 +71,55 @@ final class JarvisCoordinator {
         // Invalidate pending speech results. The microphone may still collect
         // a fresh utterance, and in-progress delegated work is not cancelled.
         speechEpoch.incrementAndGet();
+    }
+
+    /**
+     * Preview-only urgent handling. Partial hypotheses NEVER delegate worker jobs.
+     * The model generates any actual words; there are no canned acknowledgments.
+     */
+    void onInterimSpeech(String hypothesis) {
+        if(!enabled || hypothesis==null)return;
+        String candidate=hypothesis.trim().replaceAll("\\s+"," ");
+        if(candidate.length()<12)return;
+        String words=candidate.toLowerCase(java.util.Locale.ROOT);
+        // Narrow high-recall trigger for a fast path; NOT a diagnosis.
+        boolean possibleDanger=words.matches(
+            "(?s).*(\\b(dying|die|suicide|kill myself|hurt myself|can't breathe|cannot breathe|overdose|bleeding badly|heart attack|going to die|will die|will be dead|someone is dying|emergency|help me now)\\b).*");
+        if(!possibleDanger)return;
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(now-lastUrgentAt<15000)return;
+        if(!candidate.equals(lastUrgentCandidate)) {
+            lastUrgentCandidate=candidate;
+            urgentObservations=1;
+            return;
+        }
+        if(++urgentObservations<2)return;
+        lastUrgentAt=now;
+        lastUrgentCandidate="";
+        urgentObservations=0;
+        final int ticket=speechEpoch.incrementAndGet();
+        urgentDialogue.submit("INTERIM URGENT SPEECH (ASR may be inaccurate; user may continue speaking): "
+            +candidate+"\\nRespond promptly and compassionately if the statement may indicate "
+            +"immediate danger. Do not delegate work or claim emergency assistance was called. "
+            +"Return only the usual JSON structure, with delegate empty and mode none.",
+            new JarvisEngineClient.Callback() {
+                @Override public void onStage(String stage) {
+                    if(enabled && ticket==speechEpoch.get())events.onMilestone("Urgent speech: "+stage);
+                }
+                @Override public void onResult(String response) {
+                    if(!enabled || ticket!=speechEpoch.get())return;
+                    String say=response;
+                    try {
+                        JSONObject output=new JSONObject(response.trim());
+                        say=output.optString("say","");
+                    } catch(Exception ignored) {}
+                    if(!say.trim().isEmpty())events.onSpeech(say,"jarvis-urgent-"+ticket);
+                }
+                @Override public void onError(String diagnostic) {
+                    if(enabled && ticket==speechEpoch.get())
+                        events.onError("Urgent dialogue: "+diagnostic);
+                }
+            });
     }
 
     void onUserSaid(String words) {
@@ -112,13 +166,7 @@ final class JarvisCoordinator {
     private void sayWithDialogue(String instruction, JarvisEngineClient chosenDialogue) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
-        String persona="You are Jarvis, the active personal operations controller on this Android device. "
-            +"The app supplies your microphone, speech recognition, and voice synthesis. "
-            +"Never say you cannot hear or speak merely because the language model cannot directly access hardware. "
-            +"Use the OpenCode worker sessions for real actions; do not pretend to execute tasks in this dialogue. "
-            +"Keep spoken replies natural, brief, and useful, without reading logs or narrating thought processes. "
-            +"Never invent successful actions.\\n";
-        chosenDialogue.submit(persona+instruction,new JarvisEngineClient.Callback() {
+        chosenDialogue.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
             }
@@ -246,6 +294,7 @@ final class JarvisCoordinator {
     void close() {
         enabled=false;
         dialogue.close();
+        urgentDialogue.close();
         for(JarvisEngineClient worker:projectWorkers.values())worker.close();
         projectWorkers.clear();
     }
