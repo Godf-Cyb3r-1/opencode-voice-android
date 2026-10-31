@@ -1057,7 +1057,7 @@ public final class OpenCodeWebActivity extends Activity {
                 handler.post(() -> {
                     if (pocket != null) pocket.setReferenceFile(target.getAbsolutePath());
                     if (dashboard != null) dashboard.addEvent("REFERENCE VOICE  •  Installed locally. Testing clone.");
-                    speakAssistant("Voice profile installed. I'm ready to assist you.", "jarvis-preview");
+                    if (coordinator != null && jarvis != null && jarvis.isActive()) coordinator.activate();
                 });
             } catch (Throwable failure) {
                 temp.delete();
