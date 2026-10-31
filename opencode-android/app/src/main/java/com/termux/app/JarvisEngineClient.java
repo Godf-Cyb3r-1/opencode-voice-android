@@ -77,7 +77,8 @@ final class JarvisEngineClient {
 
                 // Keep dialogue on a separate session without requiring a preinstalled agent name.
                 http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
-                long deadline = android.os.SystemClock.elapsedRealtime() + 90_000L;
+                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
+                long firstStableAt = 0L;
                 String latest = "";
                 int stable = 0;
                 while (android.os.SystemClock.elapsedRealtime() < deadline) {
@@ -87,16 +88,27 @@ final class JarvisEngineClient {
                         "/api/session/" + Uri.encode(sessionId) + "/message?type=assistant&order=desc&limit=5",
                         null, 8000);
                     String text = latestAssistant(messages);
-                    if (!text.isEmpty() && text.equals(latest)) stable++; else stable = 0;
+                    if (!text.isEmpty() && text.equals(latest)) stable++;
+                    else { stable = 0; firstStableAt = android.os.SystemClock.elapsedRealtime(); }
                     latest = text;
-                    boolean active = isSessionActive();
-                    if (!active && !latest.isEmpty() && !latest.equals(previousAnswer) && stable >= 0) {
+                    boolean active = true;
+                    if (!dialogueOnly) active = isSessionActive();
+                    // The conversational model must not wait on an indefinitely
+                    // active OpenCode session. Return stable user-facing text.
+                    boolean dialogueReady = dialogueOnly && stable >= 2 &&
+                        android.os.SystemClock.elapsedRealtime() - firstStableAt >= 750L;
+                    if ((dialogueReady || !active) && !latest.isEmpty() && !latest.equals(previousAnswer)) {
                         String finished = latest;
                         ui.post(() -> callback.onResult(finished));
                         return;
                     }
                 }
-                throw new IllegalStateException("Engine response timed out; check provider and model settings");
+                if(dialogueOnly && !latest.isEmpty() && !latest.equals(previousAnswer)) {
+                    final String response=latest;
+                    ui.post(() -> callback.onResult(response));
+                    return;
+                }
+                throw new IllegalStateException("Engine response timed out; check configured model and API session status");
             } catch (Exception e) {
                 String diagnostic = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 ui.post(() -> callback.onError(diagnostic));
