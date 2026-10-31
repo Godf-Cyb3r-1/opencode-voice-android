@@ -27,7 +27,9 @@ final class JarvisEngineClient {
     private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService workers =
         java.util.concurrent.Executors.newSingleThreadExecutor();
-    private String sessionId;
+    private volatile String sessionId;
+    private final java.util.concurrent.ExecutorService corrections =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
     private final boolean dialogueOnly;
     private final String preferredModel;
 
@@ -97,6 +99,26 @@ final class JarvisEngineClient {
                 throw new IllegalStateException("Engine response timed out; check provider and model settings");
             } catch (Exception e) {
                 String diagnostic = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                ui.post(() -> callback.onError(diagnostic));
+            }
+        });
+    }
+
+    void injectCorrection(String correction, Callback callback) {
+        if(correction==null || correction.trim().isEmpty())return;
+        corrections.execute(() -> {
+            try {
+                String id=sessionId;
+                if(id==null || id.isEmpty())
+                    throw new IllegalStateException("No active OpenCode worker session");
+                JSONObject prompt=new JSONObject().put("text",
+                    "LIVE USER CORRECTION TO THE ONGOING TASK: "+correction+
+                    "\\nPrioritize this latest instruction when it changes the current objective. "+
+                    "Preserve completed safe work where possible; adjust remaining steps.");
+                http("POST", "/api/session/" + Uri.encode(id) + "/prompt",prompt,12000);
+                stage(callback,"correction admitted to active session");
+            }catch(Exception error) {
+                String diagnostic=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
@@ -197,5 +219,5 @@ final class JarvisEngineClient {
         } finally {conn.disconnect();}
     }
 
-    void close() { workers.shutdownNow(); }
+    void close() { workers.shutdownNow(); corrections.shutdownNow(); }
 }
