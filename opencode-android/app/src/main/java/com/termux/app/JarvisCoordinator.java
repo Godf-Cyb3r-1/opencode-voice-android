@@ -84,11 +84,11 @@ final class JarvisCoordinator {
         String words=candidate.toLowerCase(java.util.Locale.ROOT);
         // Narrow high-recall trigger for a fast path; NOT a diagnosis.
         boolean possibleDanger=words.matches(
-            "(?s).*(\\b(dying|die|suicide|kill myself|hurt myself|can't breathe|cannot breathe|overdose|bleeding badly|heart attack|going to die|will die|will be dead|someone is dying|emergency|help me now)\\b).*");
+            "(?s).*(\\b(dying|die|suicide|kill myself|hurt myself|can't breathe|cannot breathe|overdose|bleeding badly|heart attack|going to die|will die|will died|will be dead|someone is dying|emergency|help me now)\\b).*");
         if(!possibleDanger)return;
         long now=android.os.SystemClock.elapsedRealtime();
         if(now-lastUrgentAt<15000)return;
-        if(!candidate.equals(lastUrgentCandidate)) {
+        if(lastUrgentCandidate.isEmpty() || !candidate.startsWith(lastUrgentCandidate)) {
             lastUrgentCandidate=candidate;
             urgentObservations=1;
             return;
