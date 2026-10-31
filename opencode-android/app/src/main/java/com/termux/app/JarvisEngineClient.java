@@ -85,11 +85,17 @@ final class JarvisEngineClient {
                     + "\n\nTask: " + instruction
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
 
-                // Keep dialogue on a separate session without requiring a preinstalled agent name.
+                // Jarvis dialogue must never execute coding tools. Work sessions retain tools.
+                if(dialogueOnly) {
+                    JSONObject disabled=new JSONObject();
+                    for(String tool : new String[]{"bash","read","write","edit","apply_patch","glob","grep","list","webfetch","websearch","task","todowrite","todoread","question","skill"})
+                        disabled.put(tool,false);
+                    prompt.put("tools",disabled);
+                }
                 stage(callback, "sending prompt to OpenCode");
-                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, dialogueOnly?90000:120000);
                 stage(callback, "waiting for model response");
-                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
+                long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 45_000L : 120_000L);
                 long firstStableAt = 0L;
                 String latest = "";
                 int stable = 0;
