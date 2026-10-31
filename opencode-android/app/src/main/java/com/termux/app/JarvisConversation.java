@@ -48,11 +48,11 @@ final class JarvisConversation {
     }
     void pauseDuringSpeech() { speaking=true; /* Keep speech recognition active for barge-in. */ }
     void onAnswerSpoken() {
-        awaitingResponse=false;
+        speaking=false;
         if(active){callbacks.onState("listening");}
     }
     void onAnswerUnavailable() {
-        awaitingResponse=false;
+        speaking=false;
         if(active){stt.resumeListening();callbacks.onState("listening");}
     }
     void onPermissionResult(boolean granted) {
