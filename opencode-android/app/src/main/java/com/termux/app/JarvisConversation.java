@@ -22,12 +22,13 @@ final class JarvisConversation {
     private boolean active;
     private long lastActivity;
     private boolean idlePrompted;
+    private boolean hasMeaningfulSpeech;
     private final Runnable clock=new Runnable(){
         @Override public void run(){
             if(!active)return;
             turns.tick();
             long now=android.os.SystemClock.elapsedRealtime();
-            if(!idlePrompted && now-lastActivity>=15000L){
+            if(!idlePrompted && !hasMeaningfulSpeech && now-lastActivity>=15000L){
                 idlePrompted=true;
                 callbacks.onIdle();
             }
@@ -43,6 +44,7 @@ final class JarvisConversation {
                 if(!active)return;
                 lastActivity=android.os.SystemClock.elapsedRealtime();
                 idlePrompted=false;
+                hasMeaningfulSpeech=false;
                 callbacks.onTranscript(text);
                 turns.reset();
                 if(stt!=null)stt.requestReset();
@@ -55,12 +57,14 @@ final class JarvisConversation {
         active=true;
         lastActivity=android.os.SystemClock.elapsedRealtime();
         idlePrompted=false;
+        hasMeaningfulSpeech=false;
         turns.start();
         useAndroid=activity.getSharedPreferences("jarvis_asr",0).getBoolean("prefer_android",true);
         if(useAndroid){
             androidStt=new JarvisAndroidStt(activity,new JarvisAndroidStt.Events(){
                 @Override public void onState(String state){if(active)callbacks.onState(state);}
-                @Override public void onPartial(String text){if(active){turns.update(text);if(text!=null && !text.trim().isEmpty()){lastActivity=android.os.SystemClock.elapsedRealtime();idlePrompted=false;}}}
+                @Override public void onPartial(String text){if(active){turns.update(text);if(text!=null && text.trim().split("\\s+").length>=2){hasMeaningfulSpeech=true;lastActivity=android.os.SystemClock.elapsedRealtime();idlePrompted=false;}}}
+                @Override public void onFinal(String text){if(active){turns.markFinal(text);if(text!=null && !text.trim().isEmpty()){hasMeaningfulSpeech=true;lastActivity=android.os.SystemClock.elapsedRealtime();idlePrompted=false;}}}
                 @Override public void onFailure(String reason){if(active)callbacks.onState("Android ASR: "+reason);}
             });
             androidStt.start();
@@ -68,7 +72,7 @@ final class JarvisConversation {
         stt=new JarvisStreamingStt(activity,new JarvisStreamingStt.Events(){
             @Override public void onState(String state){if(active)callbacks.onState(state);}
             @Override public void onPartial(String text){if(active)turns.update(text);}
-            @Override public void onFinal(String text){if(active)turns.update(text);}
+            @Override public void onFinal(String text){if(active)turns.markFinal(text);}
             @Override public void onFailure(String reason){if(active)callbacks.onState("ASR error: "+reason);}
         });
         stt.start();
