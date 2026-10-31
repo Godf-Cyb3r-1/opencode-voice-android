@@ -556,6 +556,7 @@ public final class OpenCodeWebActivity extends Activity {
                 if(jarvisCurrentlySpeaking && !isAssistantEcho(partial) && partial.trim().split("\\s+").length>=2)
                     interruptJarvisSpeech();
                 if (dashboard != null) dashboard.showLiveTranscript(partial);
+                if (coordinator != null) coordinator.onInterimSpeech(partial);
             }
             @Override public void onState(String state) {
                 updateJarvisLabel(state);
