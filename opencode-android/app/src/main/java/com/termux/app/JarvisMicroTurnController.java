@@ -18,6 +18,7 @@ final class JarvisMicroTurnController {
     private long changedAt;
     private long lastCommitAt;
     private boolean active;
+    private boolean requireFinal;
     private boolean finalRecognition;
     private int revisions;
     JarvisMicroTurnController(Listener listener){this.listener=listener;}
@@ -27,6 +28,7 @@ final class JarvisMicroTurnController {
         finalRecognition=false;revisions=0;
     }
     synchronized void stop(){active=false;}
+    synchronized void requireFinalResult(boolean enabled){requireFinal=enabled;}
     synchronized void update(String text){
         if(!active)return;
         String value=text==null?"":text.trim().replaceAll("\\s+"," ");
@@ -54,7 +56,7 @@ final class JarvisMicroTurnController {
         // Reject noise-like fragments, repeated hallucinations and one-off
         // partial guesses. Genuine Android final results can commit after hold.
         boolean plausible=hypothesis.length()>=7 && hypothesis.matches(".*[A-Za-z].*")
-            && (finalRecognition || revisions>=2);
+            && (finalRecognition || (!requireFinal && revisions>=2));
         if(plausible && enoughWords && stableFor>=wait && !hypothesis.equals(committed)
                 && now-lastCommitAt>=600){
             committed=hypothesis;
