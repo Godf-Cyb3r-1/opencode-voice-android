@@ -225,11 +225,12 @@ final class JarvisStreamingStt {
                      textIdle>=stuckLimit);
                 if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
-                    pausedForResponse=true;
+                    // Immediately reset the utterance, keeping the microphone
+                    // open and decoding during dialogue/worker processing.
                     recognizer.reset(stream);
                     hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
-                    emitState("thinking");
                     ui.post(()->events.onFinal(utterance));
+                    emitState("listening");
                 }
             }
         }catch(Throwable failure) {
