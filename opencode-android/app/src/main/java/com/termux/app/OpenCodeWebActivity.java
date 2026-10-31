@@ -579,7 +579,7 @@ public final class OpenCodeWebActivity extends Activity {
             }
             autoNarrate = false;
             handler.removeCallbacks(narrationPoll);
-            updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+            updateJarvisLabel(jarvis.isActive() ? "ready" : "off");
         });
         toolbar.addView(jarvisButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
         Button mic = new Button(this);
@@ -705,9 +705,22 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void toggleListening() {
                 if (speech != null) speech.stop();
                 jarvis.toggle();
+                if(coordinator!=null) {
+                    if(jarvis.isActive())coordinator.activate();
+                    else coordinator.deactivate();
+                }
                 autoNarrate = false;
                 handler.removeCallbacks(narrationPoll);
                 updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+            }
+            @Override public void submitText(String text) {
+                if(jarvis==null || !jarvis.isActive()) {
+                    if(dashboard!=null)dashboard.addEvent("JARVIS  •  Start Jarvis to establish the conversation session");
+                    return;
+                }
+                if(jarvisCurrentlySpeaking)interruptJarvisSpeech();
+                if(dashboard!=null)dashboard.addEvent("YOU  •  "+text);
+                if(coordinator!=null)coordinator.onUserSaid(text);
             }
             @Override public void openConsole() { toggleEngineConsole(); }
             @Override public void openSettings() { showVoiceSettings(); }
