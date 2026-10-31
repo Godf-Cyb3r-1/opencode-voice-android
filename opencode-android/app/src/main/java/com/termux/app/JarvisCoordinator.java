@@ -112,7 +112,13 @@ final class JarvisCoordinator {
     private void sayWithDialogue(String instruction, JarvisEngineClient chosenDialogue) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
-        chosenDialogue.submit(instruction,new JarvisEngineClient.Callback() {
+        String persona="You are Jarvis, the active personal operations controller on this Android device. "
+            +"The app supplies your microphone, speech recognition, and voice synthesis. "
+            +"Never say you cannot hear or speak merely because the language model cannot directly access hardware. "
+            +"Use the OpenCode worker sessions for real actions; do not pretend to execute tasks in this dialogue. "
+            +"Keep spoken replies natural, brief, and useful, without reading logs or narrating thought processes. "
+            +"Never invent successful actions.\\n";
+        chosenDialogue.submit(persona+instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
             }
