@@ -35,6 +35,7 @@ final class JarvisCoordinator {
     private volatile int workRevision;
     private volatile int lastProgressAnnouncement;
     private volatile String lastUserWords = "";
+    private volatile boolean dialoguePending;
 
     JarvisCoordinator(Context context, Events events) {
         this.context=context.getApplicationContext();
@@ -66,7 +67,7 @@ final class JarvisCoordinator {
     }
 
     void onListeningIdle() {
-        if(!enabled)return;
+        if(!enabled || dialoguePending || !activeWork.isEmpty())return;
         sayWithDialogue("The user has been quiet for a while. If appropriate, say one short, natural check-in question. Do not announce listening, status, or technical details. Do not delegate any work.");
     }
 
@@ -84,6 +85,7 @@ final class JarvisCoordinator {
     private void sayWithDialogue(String instruction, String context) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
+        dialoguePending=true;
         String system="You are Jarvis. Respond naturally and briefly. Return JSON keys say, delegate, mode, project. "+
             "For ordinary chat delegate must be empty. Use tools only in separate work sessions. "+context;
         dialogue.submit(instruction,system,new JarvisEngineClient.Callback() {
@@ -91,6 +93,7 @@ final class JarvisCoordinator {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
             }
             @Override public void onResult(String response) {
+                if(ticket==speechEpoch.get())dialoguePending=false;
                 if(!enabled || ticket!=speechEpoch.get()) {events.onMilestone("Discarded superseded dialogue "+ticket);return;}
                 String spoken=response;
                 String delegate="";
@@ -122,7 +125,8 @@ final class JarvisCoordinator {
                 }
             }
             @Override public void onError(String diagnostic) {
-                if(enabled) events.onError("Dialogue request "+ticket+": "+diagnostic);
+                if(ticket==speechEpoch.get())dialoguePending=false;
+                if(enabled && ticket==speechEpoch.get()) events.onError("Dialogue request "+ticket+": "+diagnostic);
             }
         });
     }
@@ -158,14 +162,19 @@ final class JarvisCoordinator {
 
     private void delegateWork(String instruction) {
         if(!enabled)return;
+        if(!activeWork.isEmpty()) {
+            events.onMilestone("Project already running; preserving existing execution.");
+            sayWithDialogue("The project is already running. Tell the user briefly that the existing work continues, and ask whether the new request should be a revision or a separate project. Do not claim the new task started.");
+            return;
+        }
         activeWork=instruction;
         registry.updateProject(project,instruction);
         final int revision=++workRevision;
-        events.onMilestone("Subagent accepted task");
+        events.onMilestone("Submitting task to project session: "+project);
         // Announce real progress only if a delegated task is still running
         // after a meaningful interval. All words are composed by the model.
         ui.postDelayed(() -> {
-            if (enabled && revision==workRevision && !activeWork.isEmpty()
+            if (enabled && !dialoguePending && revision==workRevision && !activeWork.isEmpty()
                     && lastProgressAnnouncement!=revision) {
                 lastProgressAnnouncement=revision;
                 sayWithDialogue("A delegated task is still running. Work: "+activeWork+
@@ -177,7 +186,7 @@ final class JarvisCoordinator {
         executor.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 workStage=stage;
-                if(enabled) events.onMilestone("Subagent: "+stage);
+                if(enabled) events.onMilestone("Project "+project+": "+stage);
             }
             @Override public void onResult(String result) {
                 if(revision==workRevision) {
