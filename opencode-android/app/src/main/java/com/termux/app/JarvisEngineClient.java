@@ -32,6 +32,7 @@ final class JarvisEngineClient {
         java.util.concurrent.Executors.newSingleThreadExecutor();
     private final boolean dialogueOnly;
     private volatile String appliedModel = "";
+    private volatile boolean jarvisAgentSelected;
     private final JarvisSessionRegistry registry;
     private final String projectKey;
 
@@ -53,6 +54,7 @@ final class JarvisEngineClient {
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
                 ensureSession(callback);
+                selectDialogueAgent();
                 applyDialogueModel();
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
@@ -76,6 +78,7 @@ final class JarvisEngineClient {
                     stage(callback, "session expired; recreating dialogue or work session");
                     clearSession();
                     ensureSession(callback);
+                    selectDialogueAgent();
                     applyDialogueModel();
                     http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 }
@@ -124,6 +127,7 @@ final class JarvisEngineClient {
         registry.clearStaleSession(dialogueOnly, projectKey);
         sessionId = "";
         appliedModel = "";
+        jarvisAgentSelected = false;
     }
 
     private void ensureSession(Callback callback) throws Exception {
@@ -150,6 +154,16 @@ final class JarvisEngineClient {
         if (dialogueOnly) registry.setDialogueId(fresh);
         else registry.setWorkId(projectKey, fresh);
         stage(callback, "new OpenCode session ready");
+    }
+
+    private void selectDialogueAgent() throws Exception {
+        if(!dialogueOnly || jarvisAgentSelected)return;
+        if(sessionId==null || sessionId.isEmpty())
+            throw new IllegalStateException("Jarvis session not ready");
+        // Real OpenCode V2 agent, not an extra personality wrapper in prompts.
+        http("POST", "/api/session/"+Uri.encode(sessionId)+"/agent",
+            new JSONObject().put("agent","jarvis"),12000);
+        jarvisAgentSelected=true;
     }
 
     private void applyDialogueModel() throws Exception {
