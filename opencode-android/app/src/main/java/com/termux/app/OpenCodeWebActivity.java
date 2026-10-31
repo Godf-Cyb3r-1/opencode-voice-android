@@ -561,6 +561,9 @@ public final class OpenCodeWebActivity extends Activity {
                     interruptJarvisSpeech();
                 if (dashboard != null) dashboard.showLiveTranscript(partial);
             }
+            @Override public void onAction(String action) {
+                if(dashboard!=null)dashboard.addEvent("JARVIS  •  "+action);
+            }
             @Override public void onIdle() {
                 if(coordinator!=null && !jarvisCurrentlySpeaking && !jarvisAnswerPending)
                     coordinator.onListeningIdle();
