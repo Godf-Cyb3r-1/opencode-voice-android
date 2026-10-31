@@ -40,16 +40,16 @@ final class JarvisDashboard extends FrameLayout {
         LinearLayout stack = new LinearLayout(context);
         stack.setOrientation(LinearLayout.VERTICAL);
         stack.setGravity(Gravity.CENTER_HORIZONTAL);
-        stack.setPadding(dp(22), dp(24), dp(22), dp(20));
+        stack.setPadding(dp(20), dp(16), dp(20), dp(16));
         addView(stack, new FrameLayout.LayoutParams(-1, -1));
 
         TextView heading = new TextView(context);
         heading.setText("J A R V I S");
-        heading.setTextSize(29);
+        heading.setTextSize(25);
         heading.setLetterSpacing(0.32f);
         heading.setTextColor(accent);
         heading.setGravity(Gravity.CENTER);
-        stack.addView(heading, new LinearLayout.LayoutParams(-1, dp(50)));
+        stack.addView(heading, new LinearLayout.LayoutParams(-1, dp(43)));
 
         subtitle = new TextView(context);
         subtitle.setText("ADAPTIVE PERSONAL OPERATIONS SYSTEM");
@@ -69,7 +69,7 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(telemetry, telemetryParams);
 
         orb = new Orb(context);
-        LinearLayout.LayoutParams orbParams = new LinearLayout.LayoutParams(dp(260), dp(260));
+        LinearLayout.LayoutParams orbParams = new LinearLayout.LayoutParams(dp(224), dp(224));
         orbParams.topMargin = dp(4);
         stack.addView(orb, orbParams);
         orb.setContentDescription("Jarvis voice status");
@@ -79,12 +79,12 @@ final class JarvisDashboard extends FrameLayout {
         state.setText("STANDBY");
         state.setTextColor(accent);
         state.setGravity(Gravity.CENTER);
-        state.setTextSize(20);
+        state.setTextSize(18);
         state.setLetterSpacing(0.12f);
         stack.addView(state, new LinearLayout.LayoutParams(-1, dp(40)));
 
         TextView hint = new TextView(context);
-        hint.setText("Jarvis speaks first. Type replies below; microphone is off.");
+        hint.setText("Your assistant, always in context. Type to begin.");
         hint.setGravity(Gravity.CENTER);
         hint.setTextColor(Color.rgb(194, 159, 130));
         hint.setTextSize(12);
@@ -95,8 +95,8 @@ final class JarvisDashboard extends FrameLayout {
         speakButton.setContentDescription("Activate or stop Jarvis voice conversation");
         speakButton.setTextColor(Color.BLACK);
         speakButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(52));
-        buttonParams.topMargin = dp(22);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(44));
+        buttonParams.topMargin = dp(10);
         stack.addView(speakButton, buttonParams);
         speakButton.setOnClickListener(v -> actions.toggleListening());
 
@@ -108,7 +108,7 @@ final class JarvisDashboard extends FrameLayout {
         composer.setTextSize(14);
         composer.setTextColor(Color.WHITE);
         composer.setHintTextColor(Color.rgb(177, 142, 111));
-        composer.setHint("Type to Jarvis — speech recognition disabled");
+        composer.setHint("Ask Jarvis anything…");
         composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         composer.setImeOptions(EditorInfo.IME_ACTION_SEND);
         composer.setOnEditorActionListener((v, action, event) -> {
@@ -124,18 +124,18 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(inputRow,inputParams);
 
         TextView timelineTitle = new TextView(context);
-        timelineTitle.setText("LIVE OPERATIONS / EXECUTION LOG");
+        timelineTitle.setText("ACTIVITY  /  DIAGNOSTICS");
         timelineTitle.setTextSize(11);
         timelineTitle.setLetterSpacing(0.12f);
         timelineTitle.setTextColor(accent);
         LinearLayout.LayoutParams timelineParams = new LinearLayout.LayoutParams(-1, dp(33));
-        timelineParams.topMargin = dp(19);
+        timelineParams.topMargin = dp(10);
         stack.addView(timelineTitle, timelineParams);
 
         ScrollView scroll = new ScrollView(context);
         activity = new TextView(context);
-        activity.setText("REACTOR READY   •   Awaiting voice activation.");
-        activity.setTextSize(13);
+        activity.setText("Ready to assist. Start Jarvis to connect.");
+        activity.setTextSize(12);
         activity.setTextColor(Color.rgb(249, 218, 185));
         activity.setLineSpacing(dp(6), 1f);
         activity.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -180,7 +180,7 @@ final class JarvisDashboard extends FrameLayout {
         state.setText(s.toUpperCase(java.util.Locale.ROOT));
         listening = "listening".equals(s) || "hearing".equals(s);
         orb.setMode(s);
-        speakButton.setText("standby".equals(s) || "off".equals(s) ? "START JARVIS" : "END JARVIS SESSION");
+        speakButton.setText("standby".equals(s) || "off".equals(s) ? "ACTIVATE JARVIS" : "JARVIS ACTIVE  •  TAP TO END");
     }
 
     void showLiveTranscript(String transcript) {
