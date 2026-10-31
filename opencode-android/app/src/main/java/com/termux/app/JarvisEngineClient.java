@@ -54,7 +54,7 @@ final class JarvisEngineClient {
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
                 if (sessionId == null) {
-                    JSONObject create = new JSONObject().put("messages", new JSONArray());
+                    JSONObject create = new JSONObject();
                     JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
                     sessionId = session.optString("id", session.optString("sessionID", ""));
                     if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
@@ -78,7 +78,7 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text",
+                JSONObject prompt = textPrompt(
                     dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
@@ -163,6 +163,10 @@ final class JarvisEngineClient {
         });
     }
 
+    private static JSONObject textPrompt(String text) throws Exception {
+        return new JSONObject().put("parts", new JSONArray().put(new JSONObject().put("type", "text").put("text", text)));
+    }
+
     private void stage(Callback callback, String stage) {
         ui.post(() -> callback.onStage(stage));
     }
@@ -243,8 +247,20 @@ final class JarvisEngineClient {
                 try(OutputStream os=conn.getOutputStream()){os.write(bytes);}
             }
             int code=conn.getResponseCode();
-            if(code < 200 || code >= 300)
-                throw new IllegalStateException(method+" "+path+" returned HTTP "+code);
+            if(code < 200 || code >= 300) {
+                String detail = "";
+                try(InputStream err=conn.getErrorStream()) {
+                    if(err!=null) {
+                        ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                        byte[] chunk=new byte[1024]; int n;
+                        while((n=err.read(chunk))!=-1 && buffer.size()<4096)
+                            buffer.write(chunk,0,Math.min(n,4096-buffer.size()));
+                        detail=buffer.toString("UTF-8").replaceAll("[\\r\\n]+"," ");
+                    }
+                }
+                throw new IllegalStateException(method+" "+path+" returned HTTP "+code+
+                    (detail.isEmpty()?"":": "+detail.substring(0,Math.min(1000,detail.length()))));
+            }
             try(InputStream input=conn.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()){
                 if(input==null)return new JSONObject();
                 byte[] buf=new byte[4096]; int n;
