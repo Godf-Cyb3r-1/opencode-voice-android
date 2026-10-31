@@ -1214,7 +1214,8 @@ public final class OpenCodeWebActivity extends Activity {
     @Override protected void onPause() {
         rememberRoute();
         pausedAt = android.os.SystemClock.elapsedRealtime();
-        if (jarvis != null && jarvis.isActive()) jarvis.stop();
+        // Keep the Jarvis session active when the app is backgrounded.
+        // OpenCodeWebService already owns the foreground engine notification.
         if (!rendererGone) web.onPause();
         super.onPause();
     }
