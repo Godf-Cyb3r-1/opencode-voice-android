@@ -35,6 +35,8 @@ final class JarvisCoordinator {
     private volatile int workRevision;
     private volatile int lastProgressAnnouncement;
     private volatile String lastUserWords = "";
+    private volatile boolean dialogueBusy;
+    private volatile String deferredWorkReport = "";
 
     JarvisCoordinator(Context context, Events events) {
         this.context=context.getApplicationContext();
@@ -75,7 +77,9 @@ final class JarvisCoordinator {
         lastUserWords=words.trim();
         final String request=lastUserWords;
         final String context="Current project: "+project+". Prior project summary: "+registry.projectSummary(project)+". Active delegated work: "+(activeWork.isEmpty()?"none":activeWork)+
-            ". Latest work stage: "+(workStage.isEmpty()?"none":workStage)+". ";
+            ". Latest work stage: "+(workStage.isEmpty()?"none":workStage)+". "+
+            (deferredWorkReport.isEmpty()?"":"Pending work update: "+deferredWorkReport+". ");
+        deferredWorkReport="";
         sayWithDialogue(request, context);
     }
 
@@ -84,6 +88,7 @@ final class JarvisCoordinator {
     private void sayWithDialogue(String instruction, String context) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
+        dialogueBusy=true;
         String system="You are Jarvis. Respond naturally and briefly. Return JSON keys say, delegate, mode, project. "+
             "For ordinary chat delegate must be empty. Use tools only in separate work sessions. "+context;
         dialogue.submit(instruction,system,new JarvisEngineClient.Callback() {
@@ -92,6 +97,7 @@ final class JarvisCoordinator {
             }
             @Override public void onResult(String response) {
                 if(!enabled || ticket!=speechEpoch.get()) {events.onMilestone("Discarded superseded dialogue "+ticket);return;}
+                dialogueBusy=false;
                 String spoken=response;
                 String delegate="";
                 String mode="new";
@@ -122,7 +128,8 @@ final class JarvisCoordinator {
                 }
             }
             @Override public void onError(String diagnostic) {
-                if(enabled) events.onError("Dialogue request "+ticket+": "+diagnostic);
+                if(ticket==speechEpoch.get()) dialogueBusy=false;
+                if(enabled && ticket==speechEpoch.get()) events.onError("Dialogue request "+ticket+": "+diagnostic);
             }
         });
     }
@@ -162,18 +169,8 @@ final class JarvisCoordinator {
         registry.updateProject(project,instruction);
         final int revision=++workRevision;
         events.onMilestone("Subagent accepted task");
-        // Announce real progress only if a delegated task is still running
-        // after a meaningful interval. All words are composed by the model.
-        ui.postDelayed(() -> {
-            if (enabled && revision==workRevision && !activeWork.isEmpty()
-                    && lastProgressAnnouncement!=revision) {
-                lastProgressAnnouncement=revision;
-                sayWithDialogue("A delegated task is still running. Work: "+activeWork+
-                    ". Last observed stage: "+workStage+
-                    ". Give the human a concise, natural progress acknowledgment only if useful. "+
-                    "Do not claim work has finished. Use your own fresh wording; avoid repetitive status phrases.");
-            }
-        }, 12000L);
+        // Do not queue unsolicited model calls on the dialogue session while
+        // a human conversation may be underway. Worker progress stays in UI.
         executor.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 workStage=stage;
@@ -187,9 +184,11 @@ final class JarvisCoordinator {
                 }
                 if(enabled) {
                     events.onMilestone("Subagent completed");
-                    sayWithDialogue("WORKER RESULT. Speak directly to the human, honestly and briefly. "+
-                        "Mention the result, important limitation and one useful next step. "+
-                        "Never read raw logs or reasoning. Result: "+result);
+                    String report="Worker finished: "+result.substring(0,Math.min(1200,result.length()));
+                    if(dialogueBusy) {
+                        deferredWorkReport=report;
+                        events.onMilestone("Worker report ready; conversation remains uninterrupted");
+                    } else sayWithDialogue(report+" Summarize naturally in one sentence.");
                 }
             }
             @Override public void onError(String diagnostic) {
