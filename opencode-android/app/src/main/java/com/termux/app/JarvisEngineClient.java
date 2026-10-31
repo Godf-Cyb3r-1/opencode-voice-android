@@ -47,7 +47,9 @@ final class JarvisEngineClient {
             .getString("model", "");
     }
 
-    void submit(String instruction, Callback callback) {
+    void submit(String instruction, Callback callback) { submit(instruction, null, callback); }
+
+    void submit(String instruction, String systemContext, Callback callback) {
         workers.execute(() -> {
             try {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
@@ -80,10 +82,10 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text",
-                    dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
-                    + "\n\nTask: " + instruction
-                    + "\n\nAfter attempting actions, give one concise spoken status update.");
+                JSONObject prompt = new JSONObject().put("text",instruction);
+                String system = dialogueOnly ? systemContext : JarvisSpeechStyle.instruction()
+                    + "\nAfter attempting actions, give one concise spoken status update.";
+                if(system!=null && !system.trim().isEmpty()) prompt.put("system",system);
 
                 // Jarvis dialogue must never execute coding tools. Work sessions retain tools.
                 if(dialogueOnly) {
