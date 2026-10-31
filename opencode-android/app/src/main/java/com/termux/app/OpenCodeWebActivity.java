@@ -291,7 +291,7 @@ public final class OpenCodeWebActivity extends Activity {
             .getString("model", ""));
         new AlertDialog.Builder(this)
             .setTitle("Jarvis fast conversational model")
-            .setMessage("Choose a lightweight non-thinking model already configured in OpenCode. Empty uses OpenCode's default. Restart the conversation to apply.")
+            .setMessage("Choose a lightweight non-thinking model already configured in OpenCode. Empty keeps the current model. A selection takes effect on the next Jarvis request.")
             .setView(entry)
             .setPositiveButton("Save", (dialog,which)-> {
                 String model=entry.getText().toString().trim();
@@ -301,7 +301,7 @@ public final class OpenCodeWebActivity extends Activity {
                 }
                 getSharedPreferences("jarvis_dialogue",MODE_PRIVATE).edit()
                     .putString("model",model).apply();
-                if(dashboard!=null)dashboard.addEvent("Fast model saved; re-open Jarvis to apply");
+                if(dashboard!=null)dashboard.addEvent("Fast model saved; applies to the next Jarvis request");
             })
             .setNegativeButton("Cancel",null).show();
     }
