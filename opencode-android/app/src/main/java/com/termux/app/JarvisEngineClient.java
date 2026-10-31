@@ -82,10 +82,18 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
-                JSONObject prompt = new JSONObject().put("text",instruction);
+                JSONObject prompt = new JSONObject().put("parts",new JSONArray()
+                    .put(new JSONObject().put("type","text").put("text",instruction)));
                 String system = dialogueOnly ? systemContext : JarvisSpeechStyle.instruction()
                     + "\nAfter attempting actions, give one concise spoken status update.";
                 if(system!=null && !system.trim().isEmpty()) prompt.put("system",system);
+                if(dialogueOnly && !preferredModel.isEmpty()) {
+                    int separator=preferredModel.indexOf('/');
+                    if(separator>0 && separator<preferredModel.length()-1)
+                        prompt.put("model",new JSONObject()
+                            .put("providerID",preferredModel.substring(0,separator))
+                            .put("modelID",preferredModel.substring(separator+1)));
+                }
 
                 // Jarvis dialogue must never execute coding tools. Work sessions retain tools.
                 if(dialogueOnly) {
@@ -95,7 +103,18 @@ final class JarvisEngineClient {
                     prompt.put("tools",disabled);
                 }
                 stage(callback, "sending prompt to OpenCode");
-                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, dialogueOnly?90000:120000);
+                String target="/api/session/" + Uri.encode(sessionId);
+                try {
+                    // Nonblocking OpenCode submission: speech is not stalled by
+                    // execution-time HTTP reads. Same session retains context.
+                    http("POST",target+"/prompt_async",prompt,12000);
+                } catch(IllegalStateException unsupported) {
+                    // Do not silently run a second prompt after a timeout, as
+                    // the first could already be executing.
+                    String reason=unsupported.getMessage()==null?"":unsupported.getMessage();
+                    if(!reason.contains("HTTP 404") && !reason.contains("HTTP 405"))throw unsupported;
+                    http("POST",target+"/prompt",prompt,dialogueOnly?25000:90000);
+                }
                 stage(callback, "waiting for model response");
                 long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 45_000L : 120_000L);
                 long firstStableAt = 0L;
