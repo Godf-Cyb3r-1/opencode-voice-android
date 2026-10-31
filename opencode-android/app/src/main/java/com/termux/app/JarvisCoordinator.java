@@ -30,6 +30,7 @@ final class JarvisCoordinator {
     private volatile String activeWork = "";
     private volatile String workStage = "";
     private volatile int workRevision;
+    private volatile int lastProgressAnnouncement;
     private volatile String lastUserWords = "";
 
     JarvisCoordinator(Context context, Events events) {
@@ -111,6 +112,18 @@ final class JarvisCoordinator {
         activeWork=instruction;
         final int revision=++workRevision;
         events.onMilestone("Subagent accepted task");
+        // Announce real progress only if a delegated task is still running
+        // after a meaningful interval. All words are composed by the model.
+        ui.postDelayed(() -> {
+            if (enabled && revision==workRevision && !activeWork.isEmpty()
+                    && lastProgressAnnouncement!=revision) {
+                lastProgressAnnouncement=revision;
+                sayWithDialogue("A delegated task is still running. Work: "+activeWork+
+                    ". Last observed stage: "+workStage+
+                    ". Give the human a concise, natural progress acknowledgment only if useful. "+
+                    "Do not claim work has finished. Use your own fresh wording; avoid repetitive status phrases.");
+            }
+        }, 12000L);
         executor.submit(instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 workStage=stage;
