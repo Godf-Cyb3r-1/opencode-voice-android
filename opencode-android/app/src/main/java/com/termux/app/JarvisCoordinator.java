@@ -125,7 +125,7 @@ final class JarvisCoordinator {
                 }
             }
             @Override public void onError(String diagnostic) {
-                if(enabled) events.onError("Dialogue request "+ticket+": "+diagnostic);
+                if(enabled && ticket==speechEpoch.get()) events.onError("Dialogue request "+ticket+": "+diagnostic);
             }
         });
     }
@@ -164,7 +164,7 @@ final class JarvisCoordinator {
         activeWork=instruction;
         registry.updateProject(project,instruction);
         final int revision=++workRevision;
-        events.onMilestone("Subagent accepted task");
+        events.onMilestone("Submitting task to OpenCode worker");
         // Announce real progress only if a delegated task is still running
         // after a meaningful interval. All words are composed by the model.
         ui.postDelayed(() -> {
@@ -188,7 +188,7 @@ final class JarvisCoordinator {
                     workStage="completed";
                     registry.updateProject(project,"Task: "+instruction+"; Result: "+result.substring(0,Math.min(1500,result.length())));
                 }
-                if(enabled) {
+                if(enabled && revision==workRevision) {
                     events.onMilestone("Subagent completed");
                     sayWithDialogue("WORKER RESULT. Speak directly to the human, honestly and briefly. "+
                         "Mention the result, important limitation and one useful next step. "+
@@ -197,7 +197,8 @@ final class JarvisCoordinator {
             }
             @Override public void onError(String diagnostic) {
                 workStage="error";
-                if(enabled) {
+                if(enabled && revision==workRevision) {
+                    activeWork="";
                     events.onError("Subagent: "+diagnostic);
                     sayWithDialogue("A delegated task failed: "+diagnostic+
                         ". Explain the failure briefly and naturally, without claiming success.");

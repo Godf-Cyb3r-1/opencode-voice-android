@@ -180,6 +180,7 @@ public final class OpenCodeWebActivity extends Activity {
                     @Override public void onError(String id) {
                         handler.post(() -> {
                             if (dashboard != null) dashboard.addEvent("VOICE ERROR  •  TTS synthesis failed.");
+                            if ("jarvis-native".equals(id)) { jarvisCurrentlySpeaking=false; jarvisAnswerPending=false; }
                             if (jarvis != null) jarvis.onAnswerUnavailable();
                         });
                     }
@@ -242,6 +243,7 @@ public final class OpenCodeWebActivity extends Activity {
         int result = speech.speak(text, TextToSpeech.QUEUE_FLUSH, params, id);
         if (result == TextToSpeech.ERROR) {
             if (dashboard != null) dashboard.addEvent("VOICE ERROR  •  Speech engine rejected playback. Open Voice Studio and preview a different voice.");
+            if ("jarvis-native".equals(id)) { jarvisCurrentlySpeaking=false; jarvisAnswerPending=false; }
             if (jarvis != null) jarvis.onAnswerUnavailable();
         }
     }
@@ -495,7 +497,11 @@ public final class OpenCodeWebActivity extends Activity {
             }
             @Override public void completed(String id) {
                 currentNeuralText=null;currentNeuralId=null;
-                if ("jarvis-native".equals(id) && jarvis != null && jarvis.isActive()) { jarvisAnswerPending=false; jarvis.onAnswerSpoken(); }
+                if ("jarvis-native".equals(id)) {
+                    jarvisCurrentlySpeaking=false;
+                    jarvisAnswerPending=false;
+                    if (jarvis != null && jarvis.isActive()) jarvis.onAnswerSpoken();
+                }
             }
             @Override public void failed(String id, String reason) {
                 if (dashboard != null) dashboard.addEvent("POCKET TTS ERROR  •  " + reason);
@@ -531,6 +537,7 @@ public final class OpenCodeWebActivity extends Activity {
             }
             @Override public void onError(String diagnostic) {
                 jarvisAnswerPending = false;
+                jarvisCurrentlySpeaking = false;
                 if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("listening");}
                 if (jarvis != null) jarvis.onAnswerUnavailable();
             }

@@ -243,8 +243,20 @@ final class JarvisEngineClient {
                 try(OutputStream os=conn.getOutputStream()){os.write(bytes);}
             }
             int code=conn.getResponseCode();
-            if(code < 200 || code >= 300)
-                throw new IllegalStateException(method+" "+path+" returned HTTP "+code);
+            if(code < 200 || code >= 300) {
+                String detail = "";
+                try(InputStream err=conn.getErrorStream()) {
+                    if(err!=null) {
+                        ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                        byte[] chunk=new byte[1024]; int n;
+                        while((n=err.read(chunk))!=-1 && buffer.size()<4096)
+                            buffer.write(chunk,0,Math.min(n,4096-buffer.size()));
+                        detail=buffer.toString("UTF-8").replaceAll("[\\r\\n]+"," ");
+                    }
+                }
+                throw new IllegalStateException(method+" "+path+" returned HTTP "+code+
+                    (detail.isEmpty()?"":": "+detail.substring(0,Math.min(1000,detail.length()))));
+            }
             try(InputStream input=conn.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()){
                 if(input==null)return new JSONObject();
                 byte[] buf=new byte[4096]; int n;
