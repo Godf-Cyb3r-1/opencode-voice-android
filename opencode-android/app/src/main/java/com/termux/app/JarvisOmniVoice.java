@@ -157,7 +157,7 @@ final class JarvisOmniVoice {
         generation.incrementAndGet();
         writtenFrames=0;
         WebSocket previous=socket;socket=null;
-        if(previous!=null){previous.send("{\\"type\\":\\"cancel\\"}");previous.cancel();}
+        if(previous!=null){previous.cancel();}
         AudioTrack track=player;player=null;
         if(track!=null){try{track.pause();track.flush();track.release();}catch(Exception ignored){}}
     }
