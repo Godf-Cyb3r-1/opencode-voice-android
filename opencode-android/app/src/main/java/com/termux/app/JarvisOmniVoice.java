@@ -128,14 +128,14 @@ final class JarvisOmniVoice {
                                 int wrote=track.write(pcm,index,Math.min(8192,pcm.length-index));
                                 if(wrote<=0)throw new IllegalStateException("PCM write failed: "+wrote);
                                 index+=wrote;
+                                writtenFrames+=wrote/2;
+                                if(!began){
+                                    track.play();
+                                    began=true;
+                                    main.post(()->events.started(id));
+                                }
                             }
-                            writtenFrames+=pcm.length/2;
                             seenAudio=true;
-                            if(!began && track.getState()==AudioTrack.STATE_INITIALIZED){
-                                track.play();
-                                began=true;
-                                main.post(()->events.started(id));
-                            }
                         } catch(Exception problem){fail(ticket,id,"Audio output: "+problem.getMessage());}
                     });
                 }
