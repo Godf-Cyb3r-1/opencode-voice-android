@@ -273,18 +273,10 @@ final class JarvisStreamingStt {
                         lastPartialUpdate=now;
                     }
                 }else if(!partial.isEmpty())stable++;
-                if(!hasSpeech || partial.isEmpty()) {
-                    // An endpoint can be signalled without a viable transcript.
-                    // Recycle the acoustic state rather than staying in HEARING.
-                    if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
-                        recognizer.reset(stream);
-                        activeFrames=0;hasSpeech=false;startedUtterance=0L;
-                        speechFrames=0;utteranceFrames=0;lastNoiseReset=now;
-                        recordingUtterance=false;utterancePcm.reset();
-                        emitState("listening");
-                    }
-                    continue;
-                }
+                // Do not depend on Zipformer's hypothesis to decide whether
+                // real recorded speech should reach Whisper. Its text may be
+                // empty or scrambled, precisely why the final model was added.
+                if(!hasSpeech)continue;
                 // Drop a decoder loop that has latched onto sustained ambient
                 // noise instead of a bounded spoken utterance. Never dispatch it.
                 if(hasSpeech && startedUtterance>0 &&
@@ -316,9 +308,14 @@ final class JarvisStreamingStt {
                 long stuckLimit=incomplete?6500:4200;
                 // Ignore premature acoustic endpoints. A short pause after
                 // "I want to build a website" is not an instruction boundary.
-                boolean endOfTurn=meaningful && speechObserved && plausibleSpeech && stable>=5 &&
-                    (quiet>=quietLimit && textIdle>=1600 ||
-                     textIdle>=stuckLimit && quiet>=900);
+                boolean textReady=partial.isEmpty() ||
+                    (meaningful && stable>=5);
+                boolean silenceReady=partial.isEmpty()
+                    ? quiet>=1700
+                    : (quiet>=quietLimit && textIdle>=1600 ||
+                       textIdle>=stuckLimit && quiet>=900);
+                boolean endOfTurn=speechObserved && plausibleSpeech &&
+                    textReady && silenceReady;
                 if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
                     final byte[] completePcm=utterancePcm.toByteArray();
