@@ -44,6 +44,16 @@ final class JarvisEngineClient {
         this.projectKey=projectKey;
         this.registry=new JarvisSessionRegistry(context);
         this.sessionId=dialogueOnly ? registry.dialogueId(projectKey) : registry.workId(projectKey);
+        // One-time migration: previously saved dialogue sessions were explicitly
+        // pinned to the custom Jarvis agent/model and can fail even when normal
+        // OpenCode sessions work. Do not touch worker sessions or their history.
+        if(dialogueOnly && !this.context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
+            .getBoolean("manual_parity_v1_"+projectKey,false)) {
+            registry.clearStaleSession(true,projectKey);
+            this.sessionId="";
+            this.context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE).edit()
+                .putBoolean("manual_parity_v1_"+projectKey,true).apply();
+        }
 
     }
 
@@ -58,9 +68,10 @@ final class JarvisEngineClient {
                 stage(callback, "establishing session");
                 ensureSession(callback);
                 if(dialogueOnly && attempt==0) rotatedBeforePrompt=recoverOldQuotaSession(callback);
-                selectDialogueAgent();
-                applyDialogueModel();
-                if(dialogueOnly)stage(callback, "model: "+(appliedModel.isEmpty()?"OpenCode session default (change in Voice Studio)":appliedModel));
+                // Match the working human OpenCode session: use default agent
+                // and default model instead of the old Jarvis-specific overrides.
+                if(!dialogueOnly) { selectDialogueAgent(); applyDialogueModel(); }
+                if(dialogueOnly)stage(callback, "manual-session parity: default OpenCode agent and model");
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -75,7 +86,10 @@ final class JarvisEngineClient {
                     null, 8000)); } catch(Exception ignored) { }
                 final String oldFailure = previousFailure;
                 JSONObject prompt = new JSONObject().put("text",
-                    dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
+                    dialogueOnly ? ("You are Jarvis, a concise conversational controller. Reply ONLY with one JSON object: "+
+                    "{\\\"say\\\":\\\"natural speech\\\",\\\"delegate\\\":\\\"\\\",\\\"mode\\\":\\\"none\\\",\\\"project\\\":\\\"\\\"}. "+
+                    "For a task, set delegate to the full instruction and mode to new or revise. "+
+                    "Do not execute tools in this dialogue. Human input: "+instruction) : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
                     + "\n\nAfter attempting actions, give one concise spoken status update.");
 
@@ -88,8 +102,7 @@ final class JarvisEngineClient {
                     stage(callback, "session expired; recreating dialogue or work session");
                     clearSession();
                     ensureSession(callback);
-                    selectDialogueAgent();
-                    applyDialogueModel();
+                    if(!dialogueOnly) { selectDialogueAgent(); applyDialogueModel(); }
                     http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
                 }
                 stage(callback, "waiting for model response");
