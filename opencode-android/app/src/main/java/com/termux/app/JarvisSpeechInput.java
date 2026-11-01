@@ -119,10 +119,13 @@ final class JarvisSpeechInput {
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
             intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,true);
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,3);
+            String language=OpenCodeWebService.preferences(activity)
+                .getString("jarvis_stt_language","en-IN");
+            boolean bilingual="auto".equals(language);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE,
-                OpenCodeWebService.preferences(activity).getString("jarvis_stt_language","en-IN"));
+                bilingual?"en-IN":language);
             intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE,activity.getPackageName());
-            if(Build.VERSION.SDK_INT>=34) {
+            if(bilingual && Build.VERSION.SDK_INT>=34) {
                 intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION,true);
                 intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
                     RecognizerIntent.LANGUAGE_SWITCH_BALANCED);
