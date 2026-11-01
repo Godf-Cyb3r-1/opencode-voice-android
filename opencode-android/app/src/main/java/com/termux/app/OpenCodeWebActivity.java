@@ -232,19 +232,6 @@ public final class OpenCodeWebActivity extends Activity {
             }
             return;
         }
-        if (false && preferPocket && pocket != null && !pocketFailed) {
-            if (pocket.isReady()) {
-                currentNeuralText=spoken;
-                currentNeuralId=id;
-                pocket.speak(spoken,id);
-            } else {
-                pendingNeuralText=spoken;
-                pendingNeuralId=id;
-                if (dashboard != null)
-                    dashboard.addEvent("POCKET TTS  •  Loading neural model. Speech is queued, not replaced with Android TTS.");
-            }
-            return;
-        }
         if (dashboard != null) dashboard.addEvent("VOICE FALLBACK  •  Android TTS is active.");
         speakJarvis(spoken,id);
     }
