@@ -17,6 +17,9 @@ import com.k2fsa.sherpa.onnx.OnlineStream;
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -44,6 +47,9 @@ final class JarvisStreamingStt {
     private final Events events;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService finalPassWorker = Executors.newSingleThreadExecutor();
+    private final AtomicInteger transcriptEpoch = new AtomicInteger();
+    private final JarvisWhisperFinalPass finalPass;
     private volatile boolean running;
     private volatile boolean pausedForResponse;
     private volatile boolean closed;
@@ -55,6 +61,7 @@ final class JarvisStreamingStt {
     JarvisStreamingStt(Activity activity, Events events) {
         this.activity=activity;
         this.events=events;
+        this.finalPass=new JarvisWhisperFinalPass(activity);
     }
 
     void start() {
@@ -67,14 +74,19 @@ final class JarvisStreamingStt {
         worker.execute(this::run);
     }
 
-    void pauseForResponse() { pausedForResponse=true; }
+    void pauseForResponse() { pausedForResponse=true;transcriptEpoch.incrementAndGet(); }
     void resumeListening() { pausedForResponse=false; }
     void stop() {
         running=false;
+        transcriptEpoch.incrementAndGet();
         pausedForResponse=false;
         synchronized(this) {if(microphone!=null)try{microphone.stop();}catch(Exception ignored){}}
     }
-    void close() {closed=true;stop();worker.shutdownNow();}
+    void close() {closed=true;stop();worker.shutdownNow();finalPassWorker.shutdownNow();
+        // Release only when no final-pass inference is running.
+        new Thread(()->{try{if(finalPassWorker.awaitTermination(2,java.util.concurrent.TimeUnit.SECONDS))finalPass.close();}
+            catch(InterruptedException ignored){Thread.currentThread().interrupt();}}, "Whisper-close").start();
+    }
 
     private void emitState(String state) {ui.post(()->events.onState(state));}
     private void emitError(String error) {ui.post(()->events.onFailure(error));}
@@ -127,7 +139,9 @@ final class JarvisStreamingStt {
             int minimum=AudioRecord.getMinBufferSize(RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
             if(minimum<=0)throw new IllegalStateException("Microphone format unsupported");
-            boolean echoAvailable=AcousticEchoCanceler.isAvailable();
+            // Disable vendor echo cancellation on VOICE_RECOGNITION input.
+            // Some device DSPs distort consonants and cause garbled Zipformer text.
+            boolean echoAvailable=false;
             // VOICE_COMMUNICATION can heavily suppress or distort phonemes on
             // vendor DSPs. Prefer unprocessed speech input for ASR.
             int inputSource=MediaRecorder.AudioSource.VOICE_RECOGNITION;
@@ -156,6 +170,20 @@ final class JarvisStreamingStt {
             boolean hasSpeech=false;
             boolean wasPaused=false;
             int activeFrames=0;
+            int speechFrames=0;
+            int utteranceFrames=0;
+            long lastNoiseReset=SystemClock.elapsedRealtime();
+            double ambientNoise=.006;
+            long lastCommitAt=0L;
+            long lastRecognizerResetAt=SystemClock.elapsedRealtime();
+            String lastCommitted="";
+            // Audio is captured once at 16 kHz and handed to Whisper verbatim.
+            // Keep 500 ms of pre-roll to protect initial consonants.
+            byte[] preRoll=new byte[RATE];
+            int preRollCursor=0;
+            boolean preRollFilled=false;
+            ByteArrayOutputStream utterancePcm=new ByteArrayOutputStream(RATE*8);
+            boolean recordingUtterance=false;
             while(running && !closed) {
                 int n=recorder.read(pcm,0,pcm.length,AudioRecord.READ_BLOCKING);
                 if(n<=0) {
@@ -166,13 +194,19 @@ final class JarvisStreamingStt {
                     if(!wasPaused) {
                         recognizer.reset(stream);
                         hasSpeech=false;activeFrames=0;stable=0;lastTextChange=0L;
+                        speechFrames=0;utteranceFrames=0;
                         lastPartial="";lastStable="";
                     }
                     wasPaused=true;
+                    recordingUtterance=false;utterancePcm.reset();
+                    preRollCursor=0;preRollFilled=false;
                     continue;
                 }
                 if(wasPaused) {
                     recognizer.reset(stream);wasPaused=false;
+                    speechFrames=0;utteranceFrames=0;
+                    recordingUtterance=false;utterancePcm.reset();
+                    preRollCursor=0;preRollFilled=false;
                     emitState("listening");
                 }
                 float[] samples=new float[n];
@@ -185,12 +219,41 @@ final class JarvisStreamingStt {
                 long now=SystemClock.elapsedRealtime();
                 // RMS is a coarse speech activity signal. It does not itself
                 // terminate utterances; recognized text + stability are required.
-                boolean activeAudio=rms>.018;
+                // Track ambient sound rather than treating every loud frame as speech.
+                if(!hasSpeech && rms<ambientNoise*2.5)
+                    ambientNoise=.985*ambientNoise+.015*rms;
+                boolean activeAudio=rms>Math.max(.012,ambientNoise*3.0);
                 if(activeAudio)activeFrames++;else activeFrames=Math.max(0,activeFrames-1);
+                if(activeAudio && hasSpeech)speechFrames++;
+                if(hasSpeech)utteranceFrames++;
                 if(activeFrames>=3) {
-                    if(!hasSpeech) {startedUtterance=now;emitState("hearing");}
+                    if(!hasSpeech) {startedUtterance=now;speechFrames=activeFrames;utteranceFrames=activeFrames;emitState("hearing");}
                     hasSpeech=true;
                     lastSpeech=now;
+                }
+                // Preserve full speech including the lead-in before energy VAD fires.
+                if(hasSpeech && !recordingUtterance){
+                    utterancePcm.reset();
+                    if(preRollFilled){utterancePcm.write(preRoll,preRollCursor,preRoll.length-preRollCursor);
+                        utterancePcm.write(preRoll,0,preRollCursor);}
+                    else utterancePcm.write(preRoll,0,preRollCursor);
+                    recordingUtterance=true;
+                }
+                byte[] framePcm=new byte[n*2];
+                for(int i=0;i<n;i++){
+                    framePcm[2*i]=(byte)(pcm[i]&0xff);
+                    framePcm[2*i+1]=(byte)((pcm[i]>>>8)&0xff);
+                }
+                if(recordingUtterance && utterancePcm.size()<RATE*2*30)
+                    utterancePcm.write(framePcm,0,framePcm.length);
+                for(byte b:framePcm){preRoll[preRollCursor++]=b;
+                    if(preRollCursor==preRoll.length){preRollCursor=0;preRollFilled=true;}}
+                // Recycle hallucinated text accumulated during prolonged ambient
+                // noise. A fresh utterance should not inherit stale decoder state.
+                if(!hasSpeech && now-lastNoiseReset>3500L){
+                    recognizer.reset(stream);lastRecognizerResetAt=now;
+                    lastPartial="";stable=0;lastTextChange=0L;
+                    lastNoiseReset=now;
                 }
                 stream.acceptWaveform(samples,RATE);
                 while(recognizer.isReady(stream)) recognizer.decode(stream);
@@ -201,10 +264,8 @@ final class JarvisStreamingStt {
                     lastPartial=partial;
                     if (!partial.isEmpty()) {
                         lastTextChange=now;
-                        // New decoded words override quiet microphone RMS.
-                        hasSpeech=true;
-                        if (startedUtterance==0L) startedUtterance=now;
-                        lastSpeech=now;
+                        // A language model may hallucinate text from background noise.
+                        // Text alone is NOT evidence that human speech occurred.
                     }
                     if(now-lastPartialUpdate>180 && !partial.isEmpty()) {
                         String visible=partial;
@@ -212,39 +273,89 @@ final class JarvisStreamingStt {
                         lastPartialUpdate=now;
                     }
                 }else if(!partial.isEmpty())stable++;
-                if(!hasSpeech || partial.isEmpty()) {
-                    // An endpoint can be signalled without a viable transcript.
-                    // Recycle the acoustic state rather than staying in HEARING.
-                    if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
-                        recognizer.reset(stream);
-                        activeFrames=0;hasSpeech=false;startedUtterance=0L;
-                        emitState("listening");
-                    }
+                // Do not depend on Zipformer's hypothesis to decide whether
+                // real recorded speech should reach Whisper. Its text may be
+                // empty or scrambled, precisely why the final model was added.
+                if(!hasSpeech)continue;
+                // Drop a decoder loop that has latched onto sustained ambient
+                // noise instead of a bounded spoken utterance. Never dispatch it.
+                if(hasSpeech && startedUtterance>0 &&
+                    now-startedUtterance>20000L &&
+                    now-lastSpeech>1800L) {
+                    recognizer.reset(stream);
+                    hasSpeech=false;activeFrames=0;stable=0;
+                    speechFrames=0;utteranceFrames=0;startedUtterance=0L;
+                    lastPartial="";lastTextChange=0L;lastNoiseReset=now;
+                    recordingUtterance=false;utterancePcm.reset();
+                    emitState("listening");
                     continue;
                 }
                 long quiet=now-lastSpeech;
                 long textIdle=lastTextChange==0L?0L:now-lastTextChange;
                 boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
-                boolean meaningful=partial.split("\\s+").length>=2;
+                boolean meaningful=partial.split("\\s+").length>=2 || partial.matches("(?i)^(hello|jarvis|status|stop|pause|resume|continue|yes|no|okay)[.!?]?$");
                 // Avoid promoting random decoded noise to a user command.
                 // Speech energy must have been present for multiple frames.
-                boolean speechObserved=activeFrames>=3 || now-lastSpeech<2500 && lastSpeech>0;
-                boolean nativeEndpoint=recognizer.isEndpoint(stream);
+                boolean speechObserved=hasSpeech && startedUtterance>0L && speechFrames>=6;
+                // A constant hum or short burst can produce fluent-looking nonsense.
+                // Require multiple speech-energy frames and a minimum utterance span.
+                boolean plausibleSpeech=utteranceFrames>=12 && speechFrames>=6 &&
+                    (double)speechFrames/Math.max(1,utteranceFrames)>=0.04;
+                // Native endpoint is advisory only; dialogue turn control uses silence and text stability.
                 // Stop waiting forever when microphone noise keeps the crude
                 // energy detector active. Require stable recognized text too.
-                long quietLimit=incomplete?2800:1400;
-                long stuckLimit=incomplete?5500:2500;
-                boolean endOfTurn=meaningful && speechObserved && stable>=3 &&
-                    (nativeEndpoint && textIdle>=350 ||
-                     quiet>=quietLimit && textIdle>=650 ||
-                     textIdle>=stuckLimit);
+                long quietLimit=incomplete?4200:2500;
+                long stuckLimit=incomplete?6500:4200;
+                // Ignore premature acoustic endpoints. A short pause after
+                // "I want to build a website" is not an instruction boundary.
+                boolean textReady=partial.isEmpty() ||
+                    (meaningful && stable>=5);
+                boolean silenceReady=partial.isEmpty()
+                    ? quiet>=1700
+                    : (quiet>=quietLimit && textIdle>=1600 ||
+                       textIdle>=stuckLimit && quiet>=900);
+                boolean endOfTurn=speechObserved && plausibleSpeech &&
+                    textReady && silenceReady;
                 if(endOfTurn && now-startedUtterance>=500) {
                     final String utterance=partial;
+                    final byte[] completePcm=utterancePcm.toByteArray();
+                    recordingUtterance=false;utterancePcm.reset();
+                    final int epoch=transcriptEpoch.get();
                     // Immediately reset the utterance, keeping the microphone
                     // open and decoding during dialogue/worker processing.
                     recognizer.reset(stream);
+                    lastRecognizerResetAt=now;
                     hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
-                    ui.post(()->events.onFinal(utterance));
+                    speechFrames=0;utteranceFrames=0;lastNoiseReset=now;
+                    // Avoid re-sending a recognizer loop that repeated identical audio.
+                    if(!utterance.equalsIgnoreCase(lastCommitted) || now-lastCommitAt>3500) {
+                        lastCommitted=utterance;
+                        lastCommitAt=now;
+                        emitState("refining speech with Whisper");
+                        finalPassWorker.execute(()->{
+                            try{
+                                float[] recorded=new float[completePcm.length/2];
+                                for(int k=0;k<recorded.length;k++){
+                                    int low=completePcm[k*2]&0xff;
+                                    int high=completePcm[k*2+1];
+                                    recorded[k]=(short)((high<<8)|low)/32768f;
+                                }
+                                String refined=finalPass.transcribe(recorded,RATE);
+                                if(epoch!=transcriptEpoch.get() || !running || pausedForResponse)return;
+                                if(refined.isEmpty()){
+                                    emitState("speech unclear — please repeat");
+                                    return;
+                                }
+                                // Zipformer remains display-only. Never submit its garbled
+                                // hypothesis as a fallback when final recognition fails.
+                                ui.post(()->{if(epoch==transcriptEpoch.get() && running && !pausedForResponse)
+                                    events.onFinal(refined);});
+                            }catch(Exception badRecognition){
+                                if(epoch==transcriptEpoch.get() && running)
+                                    emitError("Whisper final recognition: "+badRecognition.getMessage());
+                            }
+                        });
+                    }
                     emitState("listening");
                 }
             }
