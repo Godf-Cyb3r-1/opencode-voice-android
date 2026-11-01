@@ -82,6 +82,7 @@ public final class OpenCodeWebActivity extends Activity {
     private String pendingSpeakText;
     private String pendingSpeakId;
     private JarvisConversation jarvis;
+    private JarvisSpeechInput speechInput;
     private Button jarvisButton;
     private JarvisDashboard dashboard;
     private JarvisActionRouter actionRouter;
@@ -649,6 +650,32 @@ public final class OpenCodeWebActivity extends Activity {
                 if (dashboard != null && !"hearing".equals(state)) dashboard.clearLiveTranscript();
             }
         });
+        speechInput = new JarvisSpeechInput(this,new JarvisSpeechInput.Events(){
+            @Override public void state(String state){
+                if(dashboard!=null) {
+                    dashboard.setSpeechCaptureActive(speechInput!=null && speechInput.isListening());
+                    dashboard.addEvent("STT  •  "+state);
+                }
+            }
+            @Override public void partial(String text){
+                if(dashboard!=null)dashboard.showLiveTranscript(text);
+            }
+            @Override public void finalDraft(String text,float confidence){
+                if(dashboard!=null) {
+                    dashboard.setSpeechCaptureActive(false);
+                    dashboard.setTranscriptDraft(text);
+                    dashboard.addEvent("STT FINAL  •  Review before sending"+
+                        (confidence>=0?" (score "+Math.round(confidence*100)+"%)":" (confidence unavailable)"));
+                }
+            }
+            @Override public void error(String message){
+                if(dashboard!=null){
+                    dashboard.setSpeechCaptureActive(false);
+                    dashboard.clearLiveTranscript();
+                    dashboard.addEvent("STT  •  "+message);
+                }
+            }
+        });
         jarvisButton = new Button(this);
         jarvisButton.setText("◎");
         jarvisButton.setContentDescription("Start Jarvis text session");
@@ -800,6 +827,18 @@ public final class OpenCodeWebActivity extends Activity {
                 autoNarrate = false;
                 handler.removeCallbacks(narrationPoll);
                 updateJarvisLabel(jarvis.isActive() ? "ready" : "off");
+            }
+            @Override public void toggleSpeechInput() {
+                if(speechInput==null)return;
+                if(!speechInput.isListening() && jarvisCurrentlySpeaking) {
+                    jarvisCurrentlySpeaking=false;
+                    if(speech!=null)speech.stop();
+                    if(pocket!=null)pocket.stop();
+                    if(remoteVoice!=null)remoteVoice.stop();
+                    if(jarvis!=null)jarvis.onAnswerUnavailable();
+                }
+                speechInput.toggle();
+                if(dashboard!=null)dashboard.setSpeechCaptureActive(speechInput.isListening());
             }
             @Override public void submitText(String text) {
                 if(jarvis==null || !jarvis.isActive()) {
@@ -1222,6 +1261,9 @@ public final class OpenCodeWebActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(code, permissions, grantResults);
+        if(code==4817 && speechInput!=null)
+            speechInput.permissionResult(grantResults.length>0 &&
+                grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED);
 
     }
 
@@ -1295,6 +1337,8 @@ public final class OpenCodeWebActivity extends Activity {
         // Keep text-only Jarvis controller and outgoing TTS alive when the app
         // is backgrounded or the screen turns off. Engine runs in its existing
         // foreground service. Do not stop Jarvis on Activity.onPause().
+        if(speechInput!=null)speechInput.cancel();
+        if(dashboard!=null)dashboard.setSpeechCaptureActive(false);
         if (!rendererGone) web.onPause();
         super.onPause();
     }
@@ -1306,6 +1350,7 @@ public final class OpenCodeWebActivity extends Activity {
 
     @Override protected void onDestroy() {
         if (jarvis != null) jarvis.stop();
+        if(speechInput!=null)speechInput.close();
         handler.removeCallbacks(narrationPoll);
         handler.removeCallbacksAndMessages(null);
         requests.shutdownNow();
