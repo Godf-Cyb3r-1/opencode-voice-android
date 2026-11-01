@@ -41,6 +41,7 @@ final class JarvisOmniVoice {
     private volatile WebSocket socket;
     private volatile AudioTrack player;
     private volatile boolean closed;
+    private volatile long writtenFrames;
 
     JarvisOmniVoice(Context context,Events events) {this.context=context.getApplicationContext();this.events=events;}
     boolean isConfigured(){
@@ -125,6 +126,7 @@ final class JarvisOmniVoice {
                                 if(wrote<=0)throw new IllegalStateException("PCM write failed: "+wrote);
                                 index+=wrote;
                             }
+                            writtenFrames+=pcm.length/2;
                             seenAudio=true;
                         } catch(Exception problem){fail(ticket,id,"Audio output: "+problem.getMessage());}
                     });
@@ -141,7 +143,7 @@ final class JarvisOmniVoice {
         long until=android.os.SystemClock.elapsedRealtime()+8000;
         while(track==player && generation.get()>=0 &&
               track.getPlayState()==AudioTrack.PLAYSTATE_PLAYING &&
-              track.getPlaybackHeadPosition()<track.getWrittenFrames() &&
+              (track.getPlaybackHeadPosition() & 0xffffffffL)<writtenFrames &&
               android.os.SystemClock.elapsedRealtime()<until){
             try{Thread.sleep(20);}catch(InterruptedException e){Thread.currentThread().interrupt();break;}
         }
@@ -153,6 +155,7 @@ final class JarvisOmniVoice {
     }
     void stop(){
         generation.incrementAndGet();
+        writtenFrames=0;
         WebSocket previous=socket;socket=null;
         if(previous!=null){previous.send("{\\"type\\":\\"cancel\\"}");previous.cancel();}
         AudioTrack track=player;player=null;
