@@ -17,6 +17,7 @@ final class JarvisConversation {
     private final Callbacks callbacks;
     private boolean active;
     private boolean speaking;
+    private boolean microphoneMuted;
 
     JarvisConversation(Activity activity, Callbacks callbacks) {
         this.callbacks=callbacks;
@@ -39,7 +40,9 @@ final class JarvisConversation {
     }
 
     boolean isActive() { return active; }
-    void toggle() { if(active)stop();else {active=true;stt.start();} }
+    void muteMicrophone() {microphoneMuted=true;stt.pauseForResponse();callbacks.onState("microphone muted");}
+    void unmuteMicrophone() {microphoneMuted=false;if(active){stt.resumeListening();callbacks.onState("listening");}}
+    void toggle() { if(active)stop();else {active=true;stt.start();if(microphoneMuted)stt.pauseForResponse();} }
     void stop() {
         active=false;
         speaking=false;
@@ -49,11 +52,11 @@ final class JarvisConversation {
     void pauseDuringSpeech() { speaking=true; /* Keep speech recognition active for barge-in. */ }
     void onAnswerSpoken() {
         speaking=false;
-        if(active){callbacks.onState("listening");}
+        if(active && !microphoneMuted){callbacks.onState("listening");}
     }
     void onAnswerUnavailable() {
         speaking=false;
-        if(active){stt.resumeListening();callbacks.onState("listening");}
+        if(active && !microphoneMuted){stt.resumeListening();callbacks.onState("listening");}
     }
     void onPermissionResult(boolean granted) {
         if(granted && active)stt.start();
