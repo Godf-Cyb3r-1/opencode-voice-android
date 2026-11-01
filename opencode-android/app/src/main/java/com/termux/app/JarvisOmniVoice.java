@@ -85,7 +85,6 @@ final class JarvisOmniVoice {
                             case "chunk":
                                 break; // Next binary frame contains PCM.
                             case "done":
-                                if(!seenAudio){fail(ticket,id,"OmniVoice returned no PCM audio");return;}
                                 finished=true;
                                 playback.execute(()->{
                                     if(ticket!=generation.get())return;
