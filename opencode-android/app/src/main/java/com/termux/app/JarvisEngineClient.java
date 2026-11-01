@@ -64,6 +64,11 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
+                String previousFailure = "";
+                try { previousFailure = latestAssistantFailure(http("GET",
+                    "/api/session/" + Uri.encode(sessionId) + "/message?order=desc&limit=12",
+                    null, 8000)); } catch(Exception ignored) { }
+                final String oldFailure = previousFailure;
                 JSONObject prompt = new JSONObject().put("text",
                     dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
@@ -94,6 +99,11 @@ final class JarvisEngineClient {
                         "/api/session/" + Uri.encode(sessionId) + "/message?type=assistant&order=desc&limit=5",
                         null, 8000);
                     String text = latestAssistant(messages);
+                    String currentFailure = latestAssistantFailure(http("GET",
+                        "/api/session/" + Uri.encode(sessionId) + "/message?order=desc&limit=12",
+                        null, 8000));
+                    if(!currentFailure.isEmpty() && !currentFailure.equals(oldFailure))
+                        throw new IllegalStateException("OpenCode model failed: " + currentFailure);
                     if (!text.isEmpty() && text.equals(latest)) stable++;
                     else { stable = 0; firstStableAt = android.os.SystemClock.elapsedRealtime(); }
                     latest = text;
@@ -115,7 +125,7 @@ final class JarvisEngineClient {
                     ui.post(() -> callback.onResult(response));
                     return;
                 }
-                throw new IllegalStateException("Engine response timed out; check configured model and API session status");
+                throw new IllegalStateException("Jarvis got no assistant text before timeout. Check the current model in Voice Studio and provider limit; the engine may have recorded a model error.");
             } catch (Exception e) {
                 String diagnostic = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 ui.post(() -> callback.onError(diagnostic));
@@ -301,6 +311,55 @@ final class JarvisEngineClient {
             if(spoken.length()>0)return JarvisSpeechStyle.prepare(spoken.toString());
         }
         return "";
+    }
+
+    /** OpenCode V2 puts provider failures in assistant.error or idle.error,
+     * not in text parts. Without this the UI reports a misleading timeout. */
+    private static String latestAssistantFailure(JSONObject response) {
+        JSONArray messages=response.optJSONArray("data");
+        if(messages==null) {
+            JSONObject data=response.optJSONObject("data");
+            if(data!=null)messages=data.optJSONArray("items");
+        }
+        if(messages==null)messages=response.optJSONArray("items");
+        if(messages==null)return "";
+        for(int i=0;i<messages.length();i++) {
+            JSONObject item=messages.optJSONObject(i);
+            if(item==null)continue;
+            JSONObject info=item.optJSONObject("info");
+            if(info==null)info=item;
+            String type=info.optString("type",info.optString("role",""));
+            if(!"assistant".equals(type) && !"idle".equals(type))continue;
+            Object err=info.opt("error");
+            if(err==null || JSONObject.NULL.equals(err))continue;
+            String readable=describeError(err);
+            if(readable.isEmpty())continue;
+            JSONObject model=info.optJSONObject("model");
+            String selected=model==null?"":model.optString("providerID","")+"/"+model.optString("id","");
+            if(selected.equals("/"))selected="";
+            if(readable.matches("(?is).*(quota|limit|exhaust|credits|429|billing|free messages).*"))
+                return "Provider usage limit on "+(selected.isEmpty()?"selected model":selected)+
+                    ". Select another available model in Voice Studio, or wait for the provider reset. "+readable;
+            return (selected.isEmpty()?"":selected+": ")+readable;
+        }
+        return "";
+    }
+
+    private static String describeError(Object error) {
+        String value="";
+        if(error instanceof JSONObject) {
+            JSONObject obj=(JSONObject)error;
+            value=obj.optString("message","");
+            JSONObject nested=obj.optJSONObject("data");
+            if(value.isEmpty() && nested!=null)value=nested.optString("message","");
+            if(value.isEmpty())value=obj.optString("name","");
+            if(value.isEmpty())value=obj.toString();
+        } else if(error!=null) value=String.valueOf(error);
+        // Never display credential-looking strings or long raw provider payloads.
+        value=value.replaceAll("(?i)(bearer\\s+)[^\\s]+","$1[redacted]")
+            .replaceAll("(?i)(api[_-]?key[=:]\\s*)[^\\s,}]+","$1[redacted]")
+            .replaceAll("[\\r\\n]+"," ");
+        return value.substring(0,Math.min(400,value.length()));
     }
 
     private JSONObject http(String method, String path, JSONObject payload, int timeout) throws Exception {
