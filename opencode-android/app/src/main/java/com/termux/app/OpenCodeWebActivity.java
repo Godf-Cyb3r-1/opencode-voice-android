@@ -88,9 +88,11 @@ public final class OpenCodeWebActivity extends Activity {
     private JarvisEngineClient engineClient;
     private JarvisCoordinator coordinator;
     private boolean showEngineConsole;
+    private Button returnToJarvis;
     private void toggleEngineConsole() {
         showEngineConsole = !showEngineConsole;
         if (dashboard != null) dashboard.setVisibility(showEngineConsole ? View.GONE : View.VISIBLE);
+        if (returnToJarvis != null) returnToJarvis.setVisibility(showEngineConsole ? View.VISIBLE : View.GONE);
     }
     private boolean jarvisAnswerPending;
     private String lastJarvisSpoken = "";
@@ -620,7 +622,7 @@ public final class OpenCodeWebActivity extends Activity {
             @Override public void onError(String diagnostic) {
                 jarvisAnswerPending = false;
                 jarvisCurrentlySpeaking = false;
-                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("listening");}
+                if (dashboard != null) {dashboard.addEvent("JARVIS ERROR  •  " + diagnostic);dashboard.setState("ready");}
                 if (jarvis != null) jarvis.onAnswerUnavailable();
             }
         });
@@ -818,6 +820,19 @@ public final class OpenCodeWebActivity extends Activity {
             }
         });
         body.addView(dashboard, new FrameLayout.LayoutParams(-1, -1));
+        // Keep a navigation action above the WebView: the Jarvis dashboard
+        // itself is hidden while the engine console is visible.
+        returnToJarvis = new Button(this);
+        returnToJarvis.setText("← JARVIS");
+        returnToJarvis.setTextSize(12);
+        returnToJarvis.setContentDescription("Return to Jarvis from engine screen");
+        returnToJarvis.setTextColor(Color.WHITE);
+        returnToJarvis.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(115, 58, 19)));
+        returnToJarvis.setOnClickListener(v -> {if(showEngineConsole)toggleEngineConsole();});
+        FrameLayout.LayoutParams backParams = new FrameLayout.LayoutParams(dp(112),dp(48),Gravity.TOP | Gravity.END);
+        backParams.topMargin=dp(12);backParams.rightMargin=dp(12);
+        body.addView(returnToJarvis,backParams);
+        returnToJarvis.setVisibility(View.GONE);
         actionRouter = new JarvisActionRouter(this, new JarvisActionRouter.Feedback() {
             @Override public void onEvent(String label, String detail) {
                 if (dashboard != null) dashboard.addEvent(label + "  •  " + detail);
@@ -1211,6 +1226,7 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
+        if(showEngineConsole){toggleEngineConsole();return;}
         if (!rendererGone && web.canGoBack()) web.goBack(); else super.onBackPressed();
     }
 
@@ -1276,7 +1292,9 @@ public final class OpenCodeWebActivity extends Activity {
     @Override protected void onPause() {
         rememberRoute();
         pausedAt = android.os.SystemClock.elapsedRealtime();
-        if (jarvis != null && jarvis.isActive()) jarvis.stop();
+        // Keep text-only Jarvis controller and outgoing TTS alive when the app
+        // is backgrounded or the screen turns off. Engine runs in its existing
+        // foreground service. Do not stop Jarvis on Activity.onPause().
         if (!rendererGone) web.onPause();
         super.onPause();
     }
