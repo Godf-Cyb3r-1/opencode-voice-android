@@ -205,7 +205,8 @@ final class JarvisCoordinator {
     private void sayWithDialogue(String instruction, JarvisEngineClient chosenDialogue) {
         if(!enabled)return;
         final int ticket=speechEpoch.incrementAndGet();
-        chosenDialogue.submit(instruction,new JarvisEngineClient.Callback() {
+        boolean omni="omnivoice".equals(OpenCodeWebService.preferences(context).getString("jarvis_tts_backend","pocket"));
+        chosenDialogue.submit((omni?"OmniVoice is enabled for expressive neural TTS. Use supported non-verbal tags only when natural.\\n": "OmniVoice is not enabled. No inline emotion tags.\\n")+instruction,new JarvisEngineClient.Callback() {
             @Override public void onStage(String stage) {
                 if(enabled && ticket==speechEpoch.get()) events.onMilestone("Dialogue: "+stage);
             }
