@@ -52,8 +52,11 @@ final class JarvisEngineClient {
             try {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
+                for(int attempt=0;attempt<2;attempt++) {
+                    try {
                 stage(callback, "establishing session");
                 ensureSession(callback);
+                if(dialogueOnly && attempt==0) recoverOldQuotaSession(callback);
                 selectDialogueAgent();
                 applyDialogueModel();
                 if(dialogueOnly)stage(callback, "model: "+(appliedModel.isEmpty()?"OpenCode session default (change in Voice Studio)":appliedModel));
@@ -127,11 +130,64 @@ final class JarvisEngineClient {
                     return;
                 }
                 throw new IllegalStateException("Jarvis got no assistant text before timeout. Check the current model in Voice Studio and provider limit; the engine may have recorded a model error.");
+                    } catch(Exception failure) {
+                        if(dialogueOnly && attempt==0 && recoverAfterFailure(failure,callback)) continue;
+                        if(dialogueOnly && attempt>0 && isUsageFailure(failure.getMessage())) {
+                            context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE).edit()
+                                .putLong("quota_recovery_block_until",android.os.SystemClock.elapsedRealtime()+600000L).apply();
+                        }
+                        throw failure;
+                    }
+                }
+                throw new IllegalStateException("Jarvis dialogue retry did not complete");
             } catch (Exception e) {
                 String diagnostic = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
+    }
+
+    private static boolean isUsageFailure(String message) {
+        if(message==null)return false;
+        String text=message.toLowerCase(java.util.Locale.ROOT);
+        return text.contains("usage limit") || text.contains("free messages") ||
+            text.contains("quota") || text.contains("credits exhausted") ||
+            text.contains("rate limit") || text.contains("429");
+    }
+
+    private boolean recoveryAllowed() {
+        long blocked=context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
+            .getLong("quota_recovery_block_until",0L);
+        return android.os.SystemClock.elapsedRealtime()>=blocked;
+    }
+
+    /**
+     * V2 free-provider errors may follow one historical session while
+     * other sessions still work. Rotate only the dialogue lane, never work.
+     * No request is sent to the poisoned session after detection.
+     */
+    private void recoverOldQuotaSession(Callback callback) throws Exception {
+        JSONObject messages=http("GET","/api/session/"+Uri.encode(sessionId)+
+            "/message?order=desc&limit=5",null,8000);
+        String failure=publicFailure(latestAssistantFailure(messages));
+        if(!isUsageFailure(failure))return;
+        if(!recoveryAllowed())
+            throw new IllegalStateException("Provider limit also affected a fresh Jarvis session recently. "
+                +"Verify Voice Studio's selected model; automatic retries are temporarily disabled.");
+        stage(callback,"historical Jarvis session has a usage failure; starting a clean dialogue only");
+        clearSession();
+        ensureSession(callback);
+    }
+
+    private boolean recoverAfterFailure(Exception failure, Callback callback) throws Exception {
+        if(!isUsageFailure(failure.getMessage()) &&
+            !(failure.getMessage()!=null && failure.getMessage().contains("no assistant text before timeout")))
+            return false;
+        if(!recoveryAllowed())return false;
+        stage(callback,"isolating failed Jarvis dialogue; retrying once with a fresh session");
+        clearSession();
+        ensureSession(callback);
+        return true;
     }
 
     private void clearSession() {
