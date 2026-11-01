@@ -56,6 +56,7 @@ final class JarvisEngineClient {
                 ensureSession(callback);
                 selectDialogueAgent();
                 applyDialogueModel();
+                if(dialogueOnly)stage(callback, "model: "+(appliedModel.isEmpty()?"OpenCode session default (change in Voice Studio)":appliedModel));
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -180,7 +181,8 @@ final class JarvisEngineClient {
         if(!dialogueOnly)return;
         String chosen=context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
             .getString("model","").trim();
-        if(chosen.isEmpty() || chosen.equals(appliedModel))return;
+        if(chosen.isEmpty())return;
+        if(chosen.equals(appliedModel))return;
         int slash=chosen.indexOf('/');
         if(slash<=0 || slash==chosen.length()-1)
             throw new IllegalArgumentException("Fast model must be provider/model");
