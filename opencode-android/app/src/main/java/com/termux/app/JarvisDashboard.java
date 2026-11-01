@@ -20,6 +20,7 @@ import android.widget.TextView;
 final class JarvisDashboard extends FrameLayout {
     interface Actions {
         void toggleListening();
+        void toggleSpeechInput();
         void openConsole();
         void openSettings();
         void stopSpeaking();
@@ -31,6 +32,7 @@ final class JarvisDashboard extends FrameLayout {
     private final Orb orb;
     private final Button speakButton;
     private final EditText composer;
+    private final Button recordButton;
     private final int accent = Color.rgb(255, 156, 42);
     private boolean listening;
 
@@ -84,7 +86,7 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(state, new LinearLayout.LayoutParams(-1, dp(40)));
 
         TextView hint = new TextView(context);
-        hint.setText("Type your request below. Microphone and speech recognition are disabled.");
+        hint.setText("Speak using MIC or type. Review recognized words before SEND; no always-on listening.");
         hint.setGravity(Gravity.CENTER);
         hint.setTextColor(Color.rgb(194, 159, 130));
         hint.setTextSize(12);
@@ -108,7 +110,7 @@ final class JarvisDashboard extends FrameLayout {
         composer.setTextSize(14);
         composer.setTextColor(Color.WHITE);
         composer.setHintTextColor(Color.rgb(177, 142, 111));
-        composer.setHint("Type a message to Jarvis");
+        composer.setHint("Type or dictate a message to Jarvis");
         composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         composer.setImeOptions(EditorInfo.IME_ACTION_SEND);
         composer.setOnEditorActionListener((v, action, event) -> {
@@ -116,6 +118,10 @@ final class JarvisDashboard extends FrameLayout {
             return false;
         });
         inputRow.addView(composer,new LinearLayout.LayoutParams(0,dp(56),1));
+        recordButton=utility(context,"MIC");
+        recordButton.setContentDescription("Start one speech transcription; tap again to finish");
+        recordButton.setOnClickListener(v -> actions.toggleSpeechInput());
+        inputRow.addView(recordButton,new LinearLayout.LayoutParams(dp(64),dp(56)));
         Button send=utility(context,"SEND");
         send.setOnClickListener(v -> submit(actions));
         inputRow.addView(send,new LinearLayout.LayoutParams(dp(78),dp(56)));
@@ -184,7 +190,18 @@ final class JarvisDashboard extends FrameLayout {
     }
 
     void showLiveTranscript(String transcript) {
-        subtitle.setText("HEARING  •  " + transcript);
+        subtitle.setText("LIVE (UNVERIFIED)  •  " + transcript);
+    }
+
+    void setSpeechCaptureActive(boolean active) {
+        recordButton.setText(active ? "STOP" : "MIC");
+        recordButton.setContentDescription(active ? "Finish recording and recognize" : "Start a single speech transcription");
+    }
+
+    void setTranscriptDraft(String transcript) {
+        composer.setText(transcript);
+        composer.setSelection(composer.getText().length());
+        subtitle.setText("REVIEW RECOGNIZED TEXT, THEN PRESS SEND");
     }
 
     void clearLiveTranscript() {
