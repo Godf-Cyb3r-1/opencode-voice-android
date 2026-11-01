@@ -84,6 +84,14 @@ public final class OpenCodeWebActivity extends Activity {
     private String pendingSpeakId;
     private JarvisConversation jarvis;
     private Button jarvisButton;
+    private Button muteMicButton;
+    private boolean jarvisMicMuted;
+    private void refreshMicMuteButton() {
+        if(muteMicButton==null)return;
+        muteMicButton.setText(jarvisMicMuted ? "MIC OFF" : "MIC ON");
+        muteMicButton.setContentDescription(jarvisMicMuted ? "Resume Jarvis microphone" : "Mute Jarvis microphone");
+        muteMicButton.setTextColor(jarvisMicMuted ? Color.rgb(255,130,100) : Color.rgb(120,225,160));
+    }
     private JarvisDashboard dashboard;
     private JarvisActionRouter actionRouter;
     private JarvisEngineClient engineClient;
@@ -662,6 +670,7 @@ public final class OpenCodeWebActivity extends Activity {
                 }
             } else {
                 jarvis.toggle();
+                if(jarvisMicMuted)jarvis.muteMicrophone();
                 if (coordinator != null) coordinator.activate();
             }
             autoNarrate = false;
@@ -669,6 +678,21 @@ public final class OpenCodeWebActivity extends Activity {
             updateJarvisLabel(jarvis.isActive() ? "ready" : "off");
         });
         toolbar.addView(jarvisButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        muteMicButton=new Button(this);
+        muteMicButton.setTextSize(10);
+        muteMicButton.setAllCaps(false);
+        muteMicButton.setBackgroundColor(Color.TRANSPARENT);
+        muteMicButton.setOnClickListener(v -> {
+            jarvisMicMuted=!jarvisMicMuted;
+            if(jarvis!=null) {
+                if(jarvisMicMuted)jarvis.muteMicrophone();
+                else jarvis.unmuteMicrophone();
+            }
+            refreshMicMuteButton();
+            if(dashboard!=null)dashboard.addEvent(jarvisMicMuted ? "MIC MUTED  •  Jarvis will not transcribe or submit speech" : "MIC LIVE  •  Jarvis listening resumed");
+        });
+        refreshMicMuteButton();
+        toolbar.addView(muteMicButton,new LinearLayout.LayoutParams(dp(68),dp(44)));
         Button mic = new Button(this);
         mic.setText("🎤");
         mic.setContentDescription("Dictate to OpenCode");
