@@ -4,7 +4,6 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
 import java.util.ArrayList;
 import java.util.Locale;
