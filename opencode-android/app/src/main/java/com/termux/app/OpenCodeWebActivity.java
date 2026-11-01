@@ -311,7 +311,8 @@ public final class OpenCodeWebActivity extends Activity {
             "Preview Jarvis voice",
             "Android fallback TTS engine",
             "Android fallback voice",
-            "Android TTS settings"
+            "Android TTS settings",
+            "STT recognition language"
         };
         new AlertDialog.Builder(this).setTitle("Jarvis • Voice Studio")
             .setItems(options, (dialog, choice) -> {
@@ -335,8 +336,28 @@ public final class OpenCodeWebActivity extends Activity {
                         try { startActivity(new Intent("com.android.settings.TTS_SETTINGS")); }
                         catch (Exception unavailable) { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
                         break;
+                    case 9: chooseSttLanguage(); break;
                 }
             }).setNegativeButton("Close", null).show();
+    }
+
+    private void chooseSttLanguage() {
+        final String[] labels={
+            "English (India) — recommended",
+            "Tamil (India)",
+            "English + Tamil switching (Android 14+, if installed)"
+        };
+        final String[] choices={"en-IN","ta-IN","auto"};
+        String chosen=OpenCodeWebService.preferences(this)
+            .getString("jarvis_stt_language","en-IN");
+        int current=java.util.Arrays.asList(choices).indexOf(chosen);
+        new AlertDialog.Builder(this).setTitle("Speech recognition language")
+            .setSingleChoiceItems(labels,Math.max(0,current),(dialog,index)->{
+                OpenCodeWebService.preferences(this).edit()
+                    .putString("jarvis_stt_language",choices[index]).apply();
+                if(dashboard!=null)dashboard.addEvent("STT language  •  "+labels[index]);
+                dialog.dismiss();
+            }).setNegativeButton("Cancel",null).show();
     }
 
     private void chooseJarvisFastModel() {
