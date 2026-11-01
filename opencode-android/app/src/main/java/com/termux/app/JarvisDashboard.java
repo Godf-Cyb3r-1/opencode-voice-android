@@ -16,10 +16,11 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-/** Voice-first assistant surface; no chat composer or question-answer transcript. */
+/** Text-first Jarvis console without microphone or continuous listening. */
 final class JarvisDashboard extends FrameLayout {
     interface Actions {
         void toggleListening();
+        void toggleSpeechInput();
         void openConsole();
         void openSettings();
         void stopSpeaking();
@@ -31,6 +32,7 @@ final class JarvisDashboard extends FrameLayout {
     private final Orb orb;
     private final Button speakButton;
     private final EditText composer;
+    private final Button recordButton;
     private final int accent = Color.rgb(255, 156, 42);
     private boolean listening;
 
@@ -60,7 +62,7 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(subtitle);
 
         TextView telemetry = new TextView(context);
-        telemetry.setText("◈   CORE / ONLINE     •     VOICE / READY     •     AGENT / STANDBY");
+        telemetry.setText("◈   CORE / ONLINE     •     MIC / OFF     •     AGENT / STANDBY");
         telemetry.setTextColor(Color.rgb(208, 112, 48));
         telemetry.setTextSize(9);
         telemetry.setGravity(Gravity.CENTER);
@@ -72,7 +74,7 @@ final class JarvisDashboard extends FrameLayout {
         LinearLayout.LayoutParams orbParams = new LinearLayout.LayoutParams(dp(260), dp(260));
         orbParams.topMargin = dp(4);
         stack.addView(orb, orbParams);
-        orb.setContentDescription("Jarvis voice status");
+        orb.setContentDescription("Jarvis session status");
         orb.setOnClickListener(v -> actions.toggleListening());
 
         state = new TextView(context);
@@ -84,7 +86,7 @@ final class JarvisDashboard extends FrameLayout {
         stack.addView(state, new LinearLayout.LayoutParams(-1, dp(40)));
 
         TextView hint = new TextView(context);
-        hint.setText("Jarvis speaks first. Type replies below; microphone is off.");
+        hint.setText("Speak using MIC or type. Review recognized words before SEND; no always-on listening.");
         hint.setGravity(Gravity.CENTER);
         hint.setTextColor(Color.rgb(194, 159, 130));
         hint.setTextSize(12);
@@ -92,7 +94,7 @@ final class JarvisDashboard extends FrameLayout {
 
         speakButton = new Button(context);
         speakButton.setText("ENGAGE ASSISTANT");
-        speakButton.setContentDescription("Activate or stop Jarvis voice conversation");
+        speakButton.setContentDescription("Activate or stop Jarvis text conversation");
         speakButton.setTextColor(Color.BLACK);
         speakButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(52));
@@ -108,7 +110,7 @@ final class JarvisDashboard extends FrameLayout {
         composer.setTextSize(14);
         composer.setTextColor(Color.WHITE);
         composer.setHintTextColor(Color.rgb(177, 142, 111));
-        composer.setHint("Type to Jarvis — speech recognition disabled");
+        composer.setHint("Type or dictate a message to Jarvis");
         composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         composer.setImeOptions(EditorInfo.IME_ACTION_SEND);
         composer.setOnEditorActionListener((v, action, event) -> {
@@ -116,6 +118,10 @@ final class JarvisDashboard extends FrameLayout {
             return false;
         });
         inputRow.addView(composer,new LinearLayout.LayoutParams(0,dp(56),1));
+        recordButton=utility(context,"MIC");
+        recordButton.setContentDescription("Start one speech transcription; tap again to finish");
+        recordButton.setOnClickListener(v -> actions.toggleSpeechInput());
+        inputRow.addView(recordButton,new LinearLayout.LayoutParams(dp(64),dp(56)));
         Button send=utility(context,"SEND");
         send.setOnClickListener(v -> submit(actions));
         inputRow.addView(send,new LinearLayout.LayoutParams(dp(78),dp(56)));
@@ -134,7 +140,7 @@ final class JarvisDashboard extends FrameLayout {
 
         ScrollView scroll = new ScrollView(context);
         activity = new TextView(context);
-        activity.setText("REACTOR READY   •   Awaiting voice activation.");
+        activity.setText("REACTOR READY   •   Awaiting text session activation.");
         activity.setTextSize(13);
         activity.setTextColor(Color.rgb(249, 218, 185));
         activity.setLineSpacing(dp(6), 1f);
@@ -178,13 +184,24 @@ final class JarvisDashboard extends FrameLayout {
     void setState(String raw) {
         String s = raw == null ? "standby" : raw;
         state.setText(s.toUpperCase(java.util.Locale.ROOT));
-        listening = "listening".equals(s) || "hearing".equals(s);
+        listening = false;
         orb.setMode(s);
         speakButton.setText("standby".equals(s) || "off".equals(s) ? "START JARVIS" : "END JARVIS SESSION");
     }
 
     void showLiveTranscript(String transcript) {
-        subtitle.setText("HEARING  •  " + transcript);
+        subtitle.setText("LIVE (UNVERIFIED)  •  " + transcript);
+    }
+
+    void setSpeechCaptureActive(boolean active) {
+        recordButton.setText(active ? "STOP" : "MIC");
+        recordButton.setContentDescription(active ? "Finish recording and recognize" : "Start a single speech transcription");
+    }
+
+    void setTranscriptDraft(String transcript) {
+        composer.setText(transcript);
+        composer.setSelection(composer.getText().length());
+        subtitle.setText("REVIEW RECOGNIZED TEXT, THEN PRESS SEND");
     }
 
     void clearLiveTranscript() {
@@ -217,7 +234,7 @@ final class JarvisDashboard extends FrameLayout {
         Orb(Context context) {
             super(context);
             setLayerType(View.LAYER_TYPE_SOFTWARE, null);
-            setContentDescription("Animated Jarvis core. Tap to activate or stop a voice session.");
+            setContentDescription("Animated Jarvis core. Tap to activate or stop a text session.");
             java.util.Random seeded = new java.util.Random(4407);
             for (int i = 0; i < noise.length; i++) noise[i] = 0.25f + seeded.nextFloat() * 0.75f;
         }
