@@ -134,7 +134,7 @@ final class JarvisEngineClient {
                         if(dialogueOnly && attempt==0 && recoverAfterFailure(failure,callback)) continue;
                         if(dialogueOnly && attempt>0 && isUsageFailure(failure.getMessage())) {
                             context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE).edit()
-                                .putLong("quota_recovery_block_until",android.os.SystemClock.elapsedRealtime()+600000L).apply();
+                                .putLong("quota_recovery_block_until",System.currentTimeMillis()+600000L).apply();
                         }
                         throw failure;
                     }
@@ -158,7 +158,7 @@ final class JarvisEngineClient {
     private boolean recoveryAllowed() {
         long blocked=context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
             .getLong("quota_recovery_block_until",0L);
-        return android.os.SystemClock.elapsedRealtime()>=blocked;
+        return System.currentTimeMillis()>=blocked;
     }
 
     /**
