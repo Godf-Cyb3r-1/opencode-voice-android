@@ -31,7 +31,8 @@ final class JarvisEngineClient {
     private final java.util.concurrent.ExecutorService corrections =
         java.util.concurrent.Executors.newSingleThreadExecutor();
     private final boolean dialogueOnly;
-    private final String preferredModel;
+    private volatile String appliedModel = "";
+    private volatile boolean jarvisAgentSelected;
     private final JarvisSessionRegistry registry;
     private final String projectKey;
 
@@ -42,9 +43,8 @@ final class JarvisEngineClient {
         this.dialogueOnly = dialogueOnly;
         this.projectKey=projectKey;
         this.registry=new JarvisSessionRegistry(context);
-        this.sessionId=dialogueOnly ? registry.dialogueId() : registry.workId(projectKey);
-        this.preferredModel = context.getSharedPreferences("jarvis_dialogue", Context.MODE_PRIVATE)
-            .getString("model", "");
+        this.sessionId=dialogueOnly ? registry.dialogueId(projectKey) : registry.workId(projectKey);
+
     }
 
     void submit(String instruction, Callback callback) {
@@ -53,23 +53,10 @@ final class JarvisEngineClient {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 stage(callback, "establishing session");
-                if (sessionId == null) {
-                    JSONObject create = new JSONObject().put("messages", new JSONArray());
-                    JSONObject session = unwrap(http("POST", "/api/session", create, 12000));
-                    sessionId = session.optString("id", session.optString("sessionID", ""));
-                    if (sessionId.isEmpty()) throw new IllegalStateException("Session creation returned no ID");
-                    if(dialogueOnly)registry.setDialogueId(sessionId);
-                    else registry.setWorkId(projectKey,sessionId);
-                    if (dialogueOnly && !preferredModel.isEmpty()) {
-                        int slash=preferredModel.indexOf('/');
-                        if (slash<=0 || slash==preferredModel.length()-1)
-                            throw new IllegalArgumentException("Fast model must be provider/model");
-                        JSONObject model=new JSONObject().put("providerID",preferredModel.substring(0,slash))
-                            .put("id",preferredModel.substring(slash+1));
-                        http("POST", "/api/session/" + Uri.encode(sessionId) + "/model",
-                            new JSONObject().put("model",model),12000);
-                    }
-                }
+                ensureSession(callback);
+                selectDialogueAgent();
+                applyDialogueModel();
+                if(dialogueOnly)stage(callback, "model: "+(appliedModel.isEmpty()?"OpenCode session default (change in Voice Studio)":appliedModel));
                 stage(callback, "executing "+(dialogueOnly?"dialogue":"delegated task"));
                 String previous = "";
                 try {
@@ -78,6 +65,11 @@ final class JarvisEngineClient {
                         null, 8000));
                 } catch (Exception ignored) { }
                 final String previousAnswer = previous;
+                String previousFailure = "";
+                try { previousFailure = latestAssistantFailure(http("GET",
+                    "/api/session/" + Uri.encode(sessionId) + "/message?order=desc&limit=12",
+                    null, 8000)); } catch(Exception ignored) { }
+                final String oldFailure = previousFailure;
                 JSONObject prompt = new JSONObject().put("text",
                     dialogueOnly ? instruction : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
@@ -85,7 +77,17 @@ final class JarvisEngineClient {
 
                 // Keep dialogue on a separate session without requiring a preinstalled agent name.
                 stage(callback, "sending prompt to OpenCode");
-                http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                try {
+                    http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                } catch (IllegalStateException missing) {
+                    if (!missing.getMessage().contains("HTTP 404")) throw missing;
+                    stage(callback, "session expired; recreating dialogue or work session");
+                    clearSession();
+                    ensureSession(callback);
+                    selectDialogueAgent();
+                    applyDialogueModel();
+                    http("POST", "/api/session/" + Uri.encode(sessionId) + "/prompt", prompt, 12000);
+                }
                 stage(callback, "waiting for model response");
                 long deadline = android.os.SystemClock.elapsedRealtime() + (dialogueOnly ? 25_000L : 90_000L);
                 long firstStableAt = 0L;
@@ -98,6 +100,11 @@ final class JarvisEngineClient {
                         "/api/session/" + Uri.encode(sessionId) + "/message?type=assistant&order=desc&limit=5",
                         null, 8000);
                     String text = latestAssistant(messages);
+                    String currentFailure = latestAssistantFailure(http("GET",
+                        "/api/session/" + Uri.encode(sessionId) + "/message?order=desc&limit=12",
+                        null, 8000));
+                    if(!currentFailure.isEmpty() && !currentFailure.equals(oldFailure))
+                        throw new IllegalStateException("OpenCode model failed: " + publicFailure(currentFailure));
                     if (!text.isEmpty() && text.equals(latest)) stable++;
                     else { stable = 0; firstStableAt = android.os.SystemClock.elapsedRealtime(); }
                     latest = text;
@@ -119,13 +126,73 @@ final class JarvisEngineClient {
                     ui.post(() -> callback.onResult(response));
                     return;
                 }
-                throw new IllegalStateException("Engine response timed out; check configured model and API session status");
+                throw new IllegalStateException("Jarvis got no assistant text before timeout. Check the current model in Voice Studio and provider limit; the engine may have recorded a model error.");
             } catch (Exception e) {
                 String diagnostic = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 ui.post(() -> callback.onError(diagnostic));
             }
         });
     }
+
+    private void clearSession() {
+        registry.clearStaleSession(dialogueOnly, projectKey);
+        sessionId = "";
+        appliedModel = "";
+        jarvisAgentSelected = false;
+    }
+
+    private void ensureSession(Callback callback) throws Exception {
+        // Registry returns an empty string for a missing session, not null.
+        // Never submit to /api/session//prompt.
+        String id = sessionId == null ? "" : sessionId.trim();
+        if (!id.isEmpty()) {
+            try {
+                JSONObject existing = unwrap(http("GET", "/api/session/" + Uri.encode(id), null, 8000));
+                if (!id.equals(existing.optString("id", "")))
+                    throw new IllegalStateException("Persisted session identity mismatch");
+                return;
+            } catch (IllegalStateException stale) {
+                if (!stale.getMessage().contains("HTTP 404") &&
+                    !stale.getMessage().contains("identity mismatch")) throw stale;
+                stage(callback, "stale session detected; restoring");
+                clearSession();
+            }
+        }
+        JSONObject created = unwrap(http("POST", "/api/session", new JSONObject(), 12000));
+        String fresh = created.optString("id", created.optString("sessionID", "")).trim();
+        if (fresh.isEmpty()) throw new IllegalStateException("OpenCode did not return a session ID");
+        sessionId = fresh;
+        if (dialogueOnly) registry.setDialogueId(projectKey,fresh);
+        else registry.setWorkId(projectKey, fresh);
+        stage(callback, "new OpenCode session ready");
+    }
+
+    private void selectDialogueAgent() throws Exception {
+        if(!dialogueOnly || jarvisAgentSelected)return;
+        if(sessionId==null || sessionId.isEmpty())
+            throw new IllegalStateException("Jarvis session not ready");
+        // Real OpenCode V2 agent, not an extra personality wrapper in prompts.
+        http("POST", "/api/session/"+Uri.encode(sessionId)+"/agent",
+            new JSONObject().put("agent","jarvis"),12000);
+        jarvisAgentSelected=true;
+    }
+
+    private void applyDialogueModel() throws Exception {
+        if(!dialogueOnly)return;
+        String chosen=context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE)
+            .getString("model","").trim();
+        if(chosen.isEmpty())return;
+        if(chosen.equals(appliedModel))return;
+        int slash=chosen.indexOf('/');
+        if(slash<=0 || slash==chosen.length()-1)
+            throw new IllegalArgumentException("Fast model must be provider/model");
+        JSONObject model=new JSONObject().put("providerID",chosen.substring(0,slash))
+            .put("id",chosen.substring(slash+1));
+        http("POST","/api/session/"+Uri.encode(sessionId)+"/model",
+            new JSONObject().put("model",model),12000);
+        appliedModel=chosen;
+    }
+
 
     private static boolean isCompleteDialogueText(String text) {
         if(text==null || text.trim().isEmpty())return false;
@@ -143,12 +210,34 @@ final class JarvisEngineClient {
         }
     }
 
+    /** Read a live worker's context without injecting a new prompt or interrupting it. */
+    void sideQuestion(String question, Callback callback) {
+        corrections.execute(() -> {
+            try {
+                String id = sessionId == null ? "" : sessionId.trim();
+                if(id.isEmpty()) throw new IllegalStateException("No worker session exists yet");
+                stage(callback, "reading worker progress without interrupting it");
+                JSONObject input = new JSONObject().put("prompt",
+                    "Briefly answer the user from this work session's actual progress. " +
+                    "Do not assume completion or invent evidence. Question: " + question);
+                JSONObject result = unwrap(http("POST", "/api/session/" + Uri.encode(id) +
+                    "/generate", input, 20000));
+                String answer = result.optString("text", "").trim();
+                if(answer.isEmpty()) throw new IllegalStateException("Worker returned an empty progress answer");
+                ui.post(() -> callback.onResult(JarvisSpeechStyle.prepare(answer)));
+            } catch(Exception e) {
+                String diagnostic = e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
+                ui.post(() -> callback.onError(diagnostic));
+            }
+        });
+    }
+
     void injectCorrection(String correction, Callback callback) {
         if(correction==null || correction.trim().isEmpty())return;
         corrections.execute(() -> {
             try {
                 String id=sessionId;
-                if(id==null || id.isEmpty())
+                if(id==null || id.trim().isEmpty())
                     throw new IllegalStateException("No active OpenCode worker session");
                 JSONObject prompt=new JSONObject().put("text",
                     "LIVE USER CORRECTION TO THE ONGOING TASK: "+correction+
@@ -226,6 +315,60 @@ final class JarvisEngineClient {
         return "";
     }
 
+    /** OpenCode V2 puts provider failures in assistant.error or idle.error,
+     * not in text parts. Without this the UI reports a misleading timeout. */
+    private static String latestAssistantFailure(JSONObject response) {
+        JSONArray messages=response.optJSONArray("data");
+        if(messages==null) {
+            JSONObject data=response.optJSONObject("data");
+            if(data!=null)messages=data.optJSONArray("items");
+        }
+        if(messages==null)messages=response.optJSONArray("items");
+        if(messages==null)return "";
+        for(int i=0;i<messages.length();i++) {
+            JSONObject item=messages.optJSONObject(i);
+            if(item==null)continue;
+            JSONObject info=item.optJSONObject("info");
+            if(info==null)info=item;
+            String type=info.optString("type",info.optString("role",""));
+            if(!"assistant".equals(type) && !"idle".equals(type))continue;
+            Object err=info.opt("error");
+            if(err==null || JSONObject.NULL.equals(err))continue;
+            String readable=describeError(err);
+            if(readable.isEmpty())continue;
+            JSONObject model=info.optJSONObject("model");
+            String selected=model==null?"":model.optString("providerID","")+"/"+model.optString("id","");
+            if(selected.equals("/"))selected="";
+            if(readable.matches("(?is).*(quota|limit|exhaust|credits|429|billing|free messages).*"))
+                return info.optString("id","unknown")+"\\u001fProvider usage limit on "+(selected.isEmpty()?"selected model":selected)+
+                    ". Select another available model in Voice Studio, or wait for the provider reset. "+readable;
+            return info.optString("id","unknown")+"\\u001f"+(selected.isEmpty()?"":selected+": ")+readable;
+        }
+        return "";
+    }
+
+    private static String publicFailure(String marker) {
+        int boundary=marker.indexOf("\\u001f");
+        return boundary<0?marker:marker.substring(boundary+1);
+    }
+
+    private static String describeError(Object error) {
+        String value="";
+        if(error instanceof JSONObject) {
+            JSONObject obj=(JSONObject)error;
+            value=obj.optString("message","");
+            JSONObject nested=obj.optJSONObject("data");
+            if(value.isEmpty() && nested!=null)value=nested.optString("message","");
+            if(value.isEmpty())value=obj.optString("name","");
+            if(value.isEmpty())value=obj.toString();
+        } else if(error!=null) value=String.valueOf(error);
+        // Never display credential-looking strings or long raw provider payloads.
+        value=value.replaceAll("(?i)(bearer\\s+)[^\\s]+","$1[redacted]")
+            .replaceAll("(?i)(api[_-]?key[=:]\\s*)[^\\s,}]+","$1[redacted]")
+            .replaceAll("[\\r\\n]+"," ");
+        return value.substring(0,Math.min(400,value.length()));
+    }
+
     private JSONObject http(String method, String path, JSONObject payload, int timeout) throws Exception {
         HttpURLConnection conn = (HttpURLConnection)new URL(OpenCodeWebService.origin() + path)
             .openConnection(Proxy.NO_PROXY);
@@ -243,8 +386,20 @@ final class JarvisEngineClient {
                 try(OutputStream os=conn.getOutputStream()){os.write(bytes);}
             }
             int code=conn.getResponseCode();
-            if(code < 200 || code >= 300)
-                throw new IllegalStateException(method+" "+path+" returned HTTP "+code);
+            if(code < 200 || code >= 300) {
+                String detail = "";
+                try(InputStream err=conn.getErrorStream()) {
+                    if(err!=null) {
+                        ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+                        byte[] chunk=new byte[1024]; int n;
+                        while((n=err.read(chunk))!=-1 && buffer.size()<4096)
+                            buffer.write(chunk,0,Math.min(n,4096-buffer.size()));
+                        detail=buffer.toString("UTF-8").replaceAll("[\\r\\n]+"," ");
+                    }
+                }
+                throw new IllegalStateException(method+" "+path+" returned HTTP "+code+
+                    (detail.isEmpty()?"":": "+detail.substring(0,Math.min(1000,detail.length()))));
+            }
             try(InputStream input=conn.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()){
                 if(input==null)return new JSONObject();
                 byte[] buf=new byte[4096]; int n;
