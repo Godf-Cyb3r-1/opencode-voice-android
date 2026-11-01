@@ -68,6 +68,7 @@ final class JarvisOmniVoice {
                 private volatile boolean began;
                 private volatile boolean seenAudio;
                 private volatile boolean finished;
+                private volatile int expectedRate=24000;
                 @Override public void onOpen(WebSocket ws,Response response) {}
                 @Override public void onMessage(WebSocket ws,String json){
                     if(ticket!=generation.get())return;
@@ -76,6 +77,7 @@ final class JarvisOmniVoice {
                         switch(data.optString("type")){
                             case "ready":
                                 sampleRate=data.optInt("sample_rate",24000);
+                                expectedRate=sampleRate;
                                 if(sampleRate<8000||sampleRate>48000)throw new IllegalStateException("Unsupported sample rate");
                                 ws.send(new JSONObject().put("type","start").put("utterance",utterance).toString());
                                 ws.send(new JSONObject().put("type","text").put("utterance",utterance).put("delta",text).toString());
@@ -104,6 +106,7 @@ final class JarvisOmniVoice {
                     if(ticket!=generation.get())return;
                     byte[] pcm=bytes.toByteArray();
                     if(pcm.length==0)return;
+                    if((pcm.length&1)!=0){fail(ticket,id,"Malformed PCM16 chunk (odd byte count)");return;}
                     playback.execute(()->{
                         if(ticket!=generation.get()||closed)return;
                         try {
@@ -117,7 +120,7 @@ final class JarvisOmniVoice {
                                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
                                     .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(Math.max(minimum,16384)).build();
                                 player=track;
-                                track.play();
+                                // Queue initial PCM before starting playback to reduce startup starvation.
                                 if(!began){began=true;main.post(()->events.started(id));}
                             }
                             int index=0;
@@ -128,6 +131,11 @@ final class JarvisOmniVoice {
                             }
                             writtenFrames+=pcm.length/2;
                             seenAudio=true;
+                            if(!began && track.getState()==AudioTrack.STATE_INITIALIZED){
+                                track.play();
+                                began=true;
+                                main.post(()->events.started(id));
+                            }
                         } catch(Exception problem){fail(ticket,id,"Audio output: "+problem.getMessage());}
                     });
                 }
