@@ -601,11 +601,18 @@ public final class OpenCodeWebActivity extends Activity {
                 }
             }
             @Override public void failed(String id,String reason){
-                if(dashboard!=null)dashboard.addEvent("OMNIVOICE  •  "+reason+"; switching to Android TTS");
+                boolean partial=remoteVoice!=null && remoteVoice.hasStartedAudio();
+                if(dashboard!=null)dashboard.addEvent("OMNIVOICE ERROR  •  "+reason+
+                    (partial?"; playback stopped (no mid-sentence voice switch)":"; using Android TTS fallback"));
                 if(id.equals(remoteSpeechId) && remoteSpeechText!=null){
                     String replacement=remoteSpeechText;
                     remoteSpeechText=null;remoteSpeechId=null;
-                    speakJarvis(replacement,id);
+                    if(!partial)speakJarvis(replacement,id);
+                    else {
+                        jarvisCurrentlySpeaking=false;
+                        jarvisAnswerPending=false;
+                        if(jarvis!=null)jarvis.onAnswerUnavailable();
+                    }
                 }
             }
         });
