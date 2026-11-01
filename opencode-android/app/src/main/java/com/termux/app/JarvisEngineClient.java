@@ -104,7 +104,7 @@ final class JarvisEngineClient {
                         "/api/session/" + Uri.encode(sessionId) + "/message?order=desc&limit=12",
                         null, 8000));
                     if(!currentFailure.isEmpty() && !currentFailure.equals(oldFailure))
-                        throw new IllegalStateException("OpenCode model failed: " + currentFailure);
+                        throw new IllegalStateException("OpenCode model failed: " + publicFailure(currentFailure));
                     if (!text.isEmpty() && text.equals(latest)) stable++;
                     else { stable = 0; firstStableAt = android.os.SystemClock.elapsedRealtime(); }
                     latest = text;
@@ -340,11 +340,16 @@ final class JarvisEngineClient {
             String selected=model==null?"":model.optString("providerID","")+"/"+model.optString("id","");
             if(selected.equals("/"))selected="";
             if(readable.matches("(?is).*(quota|limit|exhaust|credits|429|billing|free messages).*"))
-                return "Provider usage limit on "+(selected.isEmpty()?"selected model":selected)+
+                return info.optString("id","unknown")+"\\u001fProvider usage limit on "+(selected.isEmpty()?"selected model":selected)+
                     ". Select another available model in Voice Studio, or wait for the provider reset. "+readable;
-            return (selected.isEmpty()?"":selected+": ")+readable;
+            return info.optString("id","unknown")+"\\u001f"+(selected.isEmpty()?"":selected+": ")+readable;
         }
         return "";
+    }
+
+    private static String publicFailure(String marker) {
+        int boundary=marker.indexOf("\\u001f");
+        return boundary<0?marker:marker.substring(boundary+1);
     }
 
     private static String describeError(Object error) {
