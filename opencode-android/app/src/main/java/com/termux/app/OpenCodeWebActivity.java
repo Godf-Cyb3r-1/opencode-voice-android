@@ -67,7 +67,7 @@ public final class OpenCodeWebActivity extends Activity {
     private long pausedAt;
     private final java.util.concurrent.ExecutorService requests = java.util.concurrent.Executors.newSingleThreadExecutor();
     private static final int PICK_FILE = 4120;
-    private static final int VOICE_REQUEST = 4121;
+
     private TextToSpeech speech;
     private JarvisPocketVoice pocket;
     private JarvisOmniVoice remoteVoice;
@@ -84,19 +84,6 @@ public final class OpenCodeWebActivity extends Activity {
     private String pendingSpeakId;
     private JarvisConversation jarvis;
     private Button jarvisButton;
-    private Button muteMicButton;
-    private boolean jarvisMicMuted;
-    private void refreshMicMuteButton() {
-        if(muteMicButton==null)return;
-        muteMicButton.setText(jarvisMicMuted ? "MIC OFF" : "MIC ON");
-        muteMicButton.setContentDescription(jarvisMicMuted ? "Resume Jarvis microphone" : "Mute Jarvis microphone");
-        muteMicButton.setTextColor(jarvisMicMuted ? Color.rgb(255,130,100) : Color.rgb(120,225,160));
-    }
-    private JarvisDashboard dashboard;
-    private JarvisActionRouter actionRouter;
-    private JarvisEngineClient engineClient;
-    private JarvisCoordinator coordinator;
-    private boolean showEngineConsole;
     private void toggleEngineConsole() {
         showEngineConsole = !showEngineConsole;
         if (dashboard != null) dashboard.setVisibility(showEngineConsole ? View.GONE : View.VISIBLE);
@@ -658,7 +645,7 @@ public final class OpenCodeWebActivity extends Activity {
         });
         jarvisButton = new Button(this);
         jarvisButton.setText("◎");
-        jarvisButton.setContentDescription("Start Jarvis hands-free conversation");
+        jarvisButton.setContentDescription("Start Jarvis text session");
         jarvisButton.setTextColor(Color.GREEN);
         jarvisButton.setBackgroundColor(Color.TRANSPARENT);
         jarvisButton.setOnClickListener(v -> {
@@ -677,7 +664,6 @@ public final class OpenCodeWebActivity extends Activity {
                 }
             } else {
                 jarvis.toggle();
-                if(jarvisMicMuted)jarvis.muteMicrophone();
                 if (coordinator != null) coordinator.activate();
             }
             autoNarrate = false;
@@ -685,28 +671,6 @@ public final class OpenCodeWebActivity extends Activity {
             updateJarvisLabel(jarvis.isActive() ? "ready" : "off");
         });
         toolbar.addView(jarvisButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        muteMicButton=new Button(this);
-        muteMicButton.setTextSize(10);
-        muteMicButton.setAllCaps(false);
-        muteMicButton.setBackgroundColor(Color.TRANSPARENT);
-        muteMicButton.setOnClickListener(v -> {
-            jarvisMicMuted=!jarvisMicMuted;
-            if(jarvis!=null) {
-                if(jarvisMicMuted)jarvis.muteMicrophone();
-                else jarvis.unmuteMicrophone();
-            }
-            refreshMicMuteButton();
-            if(dashboard!=null)dashboard.addEvent(jarvisMicMuted ? "MIC MUTED  •  Jarvis will not transcribe or submit speech" : "MIC LIVE  •  Jarvis listening resumed");
-        });
-        refreshMicMuteButton();
-        toolbar.addView(muteMicButton,new LinearLayout.LayoutParams(dp(68),dp(44)));
-        Button mic = new Button(this);
-        mic.setText("🎤");
-        mic.setContentDescription("Dictate to OpenCode");
-        mic.setTextColor(Color.WHITE);
-        mic.setBackgroundColor(Color.TRANSPARENT);
-        mic.setOnClickListener(v -> dictate());
-        toolbar.addView(mic, new LinearLayout.LayoutParams(dp(48), dp(44)));
         Button speak = new Button(this);
         speak.setText("🔊");
         speak.setContentDescription("Read selected text aloud");
@@ -829,7 +793,7 @@ public final class OpenCodeWebActivity extends Activity {
                 }
                 autoNarrate = false;
                 handler.removeCallbacks(narrationPoll);
-                updateJarvisLabel(jarvis.isActive() ? "listening" : "off");
+                updateJarvisLabel(jarvis.isActive() ? "ready" : "off");
             }
             @Override public void submitText(String text) {
                 if(jarvis==null || !jarvis.isActive()) {
@@ -1229,13 +1193,6 @@ public final class OpenCodeWebActivity extends Activity {
             if (result == RESULT_OK && data != null) importPocketReference(data.getData());
             return;
         }
-        if (request == VOICE_REQUEST) {
-            if (result == RESULT_OK && data != null) {
-                ArrayList<String> matches = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-                if (matches != null && !matches.isEmpty()) insertTranscript(matches.get(0));
-            }
-            return;
-        }
 
         super.onActivityResult(request, result, data);
         if (request == PICK_FILE && fileCallback != null) {
@@ -1246,28 +1203,11 @@ public final class OpenCodeWebActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(code, permissions, grantResults);
-        if (code == 4122 && jarvis != null)
-            jarvis.onPermissionResult(grantResults.length > 0 &&
-                    grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED);
+
     }
 
     @Override public void onBackPressed() {
         if (!rendererGone && web.canGoBack()) web.goBack(); else super.onBackPressed();
-    }
-
-    private void dictate() {
-        if (speech != null) speech.stop();
-        pendingNarration = "";
-        try {
-            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag());
-            intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to OpenCode");
-            startActivityForResult(intent, VOICE_REQUEST);
-        } catch (Exception e) {
-            new AlertDialog.Builder(this).setMessage("No speech recognition activity is available on this device.")
-                .setPositiveButton("OK", null).show();
-        }
     }
 
     private void insertTranscript(String transcript) { insertTranscript(transcript, false); }
