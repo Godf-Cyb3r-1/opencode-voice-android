@@ -87,7 +87,7 @@ final class JarvisEngineClient {
                 final String oldFailure = previousFailure;
                 JSONObject prompt = new JSONObject().put("text",
                     dialogueOnly ? ("You are Jarvis, a concise conversational controller. Reply ONLY with one JSON object: "+
-                    "{\\\"say\\\":\\\"natural speech\\\",\\\"delegate\\\":\\\"\\\",\\\"mode\\\":\\\"none\\\",\\\"project\\\":\\\"\\\"}. "+
+                    "{\"say\":\"natural speech\",\"delegate\":\"\",\"mode\":\"none\",\"project\":\"\"}. "+
                     "For a task, set delegate to the full instruction and mode to new or revise. "+
                     "Do not execute tools in this dialogue. Human input: "+instruction) : JarvisSpeechStyle.instruction()
                     + "\n\nTask: " + instruction
