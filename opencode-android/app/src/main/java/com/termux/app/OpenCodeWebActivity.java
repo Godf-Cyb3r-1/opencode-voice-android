@@ -225,9 +225,9 @@ public final class OpenCodeWebActivity extends Activity {
         }
         if ("pocket".equals(backend) && pocket != null && !pocketFailed) {
             if (pocket.isReady()) {
-                currentNeuralText=spoken;currentNeuralId=id;pocket.speak(spoken,id);
+                currentNeuralText=JarvisSpeechStyle.withoutOmniVoiceTags(spoken);currentNeuralId=id;pocket.speak(currentNeuralText,id);
             }else {
-                pendingNeuralText=spoken;pendingNeuralId=id;
+                pendingNeuralText=JarvisSpeechStyle.withoutOmniVoiceTags(spoken);pendingNeuralId=id;
                 if(dashboard!=null)dashboard.addEvent("POCKET TTS  •  Loading offline voice model");
             }
             return;
@@ -237,6 +237,7 @@ public final class OpenCodeWebActivity extends Activity {
     }
 
     private void speakJarvis(String text, String id) {
+        text = JarvisSpeechStyle.withoutOmniVoiceTags(text);
         if (text == null || text.trim().isEmpty()) return;
         if (speech == null || !ttsReady) {
             pendingSpeakText = text;
