@@ -244,6 +244,18 @@ final class JarvisStreamingStt {
                     }
                     continue;
                 }
+                // Drop a decoder loop that has latched onto sustained ambient
+                // noise instead of a bounded spoken utterance. Never dispatch it.
+                if(hasSpeech && startedUtterance>0 &&
+                    now-startedUtterance>20000L &&
+                    now-lastSpeech>1800L) {
+                    recognizer.reset(stream);
+                    hasSpeech=false;activeFrames=0;stable=0;
+                    speechFrames=0;utteranceFrames=0;startedUtterance=0L;
+                    lastPartial="";lastTextChange=0L;lastNoiseReset=now;
+                    emitState("listening");
+                    continue;
+                }
                 long quiet=now-lastSpeech;
                 long textIdle=lastTextChange==0L?0L:now-lastTextChange;
                 boolean incomplete=partial.matches("(?is).*(\\b(and|or|but|because|then|to|with|for|if|when|the|a|an|can|could|would|should|please)\\s*)$");
