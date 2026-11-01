@@ -53,10 +53,11 @@ final class JarvisEngineClient {
                 if (!"ready".equals(OpenCodeWebService.state) || OpenCodeWebService.port == 0)
                     throw new IllegalStateException("Engine offline: " + OpenCodeWebService.state);
                 for(int attempt=0;attempt<2;attempt++) {
+                    boolean rotatedBeforePrompt=false;
                     try {
                 stage(callback, "establishing session");
                 ensureSession(callback);
-                if(dialogueOnly && attempt==0) recoverOldQuotaSession(callback);
+                if(dialogueOnly && attempt==0) rotatedBeforePrompt=recoverOldQuotaSession(callback);
                 selectDialogueAgent();
                 applyDialogueModel();
                 if(dialogueOnly)stage(callback, "model: "+(appliedModel.isEmpty()?"OpenCode session default (change in Voice Studio)":appliedModel));
@@ -131,8 +132,8 @@ final class JarvisEngineClient {
                 }
                 throw new IllegalStateException("Jarvis got no assistant text before timeout. Check the current model in Voice Studio and provider limit; the engine may have recorded a model error.");
                     } catch(Exception failure) {
-                        if(dialogueOnly && attempt==0 && recoverAfterFailure(failure,callback)) continue;
-                        if(dialogueOnly && attempt>0 && isUsageFailure(failure.getMessage())) {
+                        if(dialogueOnly && attempt==0 && !rotatedBeforePrompt && recoverAfterFailure(failure,callback)) continue;
+                        if(dialogueOnly && (attempt>0 || rotatedBeforePrompt) && isUsageFailure(failure.getMessage())) {
                             context.getSharedPreferences("jarvis_dialogue",Context.MODE_PRIVATE).edit()
                                 .putLong("quota_recovery_block_until",System.currentTimeMillis()+600000L).apply();
                         }
@@ -166,17 +167,18 @@ final class JarvisEngineClient {
      * other sessions still work. Rotate only the dialogue lane, never work.
      * No request is sent to the poisoned session after detection.
      */
-    private void recoverOldQuotaSession(Callback callback) throws Exception {
+    private boolean recoverOldQuotaSession(Callback callback) throws Exception {
         JSONObject messages=http("GET","/api/session/"+Uri.encode(sessionId)+
             "/message?order=desc&limit=5",null,8000);
         String failure=publicFailure(latestAssistantFailure(messages));
-        if(!isUsageFailure(failure))return;
+        if(!isUsageFailure(failure))return false;
         if(!recoveryAllowed())
             throw new IllegalStateException("Provider limit also affected a fresh Jarvis session recently. "
                 +"Verify Voice Studio's selected model; automatic retries are temporarily disabled.");
         stage(callback,"historical Jarvis session has a usage failure; starting a clean dialogue only");
         clearSession();
         ensureSession(callback);
+        return true;
     }
 
     private boolean recoverAfterFailure(Exception failure, Callback callback) throws Exception {
