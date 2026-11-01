@@ -29,6 +29,10 @@ final class JarvisSpeechStyle {
         return text;
     }
 
+    static String withoutOmniVoiceTags(String source) {
+        return source==null?"":source.replaceAll("(?i)\\\\[(?:laughter|sigh|sniff|confirmation-en|question-(?:en|ah|oh|ei|yi)|surprise-(?:ah|oh|wa|yo)|dissatisfaction-hnn)\\\\]\\\\s*", " ").replaceAll("\\\\s+"," ").trim();
+    }
+
     static List<String> chunks(String source) {
         String text=prepare(source);
         List<String> out=new ArrayList<>();
