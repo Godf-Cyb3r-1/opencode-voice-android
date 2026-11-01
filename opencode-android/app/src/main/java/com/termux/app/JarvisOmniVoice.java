@@ -42,6 +42,7 @@ final class JarvisOmniVoice {
     private volatile AudioTrack player;
     private volatile boolean closed;
     private volatile long writtenFrames;
+    private volatile boolean utteranceAudioStarted;
 
     JarvisOmniVoice(Context context,Events events) {this.context=context.getApplicationContext();this.events=events;}
     boolean isConfigured(){
@@ -51,6 +52,7 @@ final class JarvisOmniVoice {
     void speak(String text,String id){
         if(closed)return;
         stop();
+        utteranceAudioStarted=false;
         final int ticket=generation.get();
         String url=OpenCodeWebService.preferences(context).getString("jarvis_omnivoice_url","").trim();
         String token=OpenCodeWebService.preferences(context).getString("jarvis_omnivoice_token","");
@@ -73,7 +75,7 @@ final class JarvisOmniVoice {
                 @Override public void onMessage(WebSocket ws,String json){
                     if(ticket!=generation.get())return;
                     try{
-                        JSONObject data=new JSONObject(json);
+                        JSONObject data=parseServerMessage(json);
                         switch(data.optString("type")){
                             case "ready":
                                 sampleRate=data.optInt("sample_rate",24000);
@@ -132,6 +134,7 @@ final class JarvisOmniVoice {
                                 writtenFrames+=primed/2;
                                 track.play();
                                 began=true;
+                                utteranceAudioStarted=true;
                                 main.post(()->{if(ticket==generation.get())events.started(id);});
                             }
                             while(index<pcm.length && ticket==generation.get()) {
@@ -154,6 +157,40 @@ final class JarvisOmniVoice {
             });
         }catch(Exception error){fail(ticket,id,"OmniVoice setup: "+error.getMessage());}
     }
+    boolean hasStartedAudio(){return utteranceAudioStarted;}
+
+    // Some Kaggle implementations emit non-standard Infinity/NaN numeric
+    // telemetry. Ignore only unquoted non-finite values in optional JSON
+    // metadata. PCM frames are never modified.
+    private static JSONObject parseServerMessage(String raw) throws Exception {
+        try {return new JSONObject(raw);}
+        catch(org.json.JSONException invalid) {
+            if(!raw.contains("Infinity") && !raw.contains("NaN"))throw invalid;
+            StringBuilder safe=new StringBuilder(raw.length());
+            boolean quoted=false,escaped=false;
+            for(int i=0;i<raw.length();) {
+                char ch=raw.charAt(i);
+                if(quoted) {
+                    safe.append(ch);i++;
+                    if(escaped)escaped=false;
+                    else if(ch=='\\')escaped=true;
+                    else if(ch=='"')quoted=false;
+                    continue;
+                }
+                if(ch=='"'){quoted=true;safe.append(ch);i++;continue;}
+                int n=0;
+                if(raw.startsWith("-Infinity",i))n=9;
+                else if(raw.startsWith("Infinity",i))n=8;
+                else if(raw.startsWith("NaN",i))n=3;
+                if(n>0 && (i==0 || ",:[ \t\r\n".indexOf(raw.charAt(i-1))>=0)
+                    && (i+n==raw.length() || ",}] \t\r\n".indexOf(raw.charAt(i+n))>=0)) {
+                    safe.append("null");i+=n;
+                } else {safe.append(ch);i++;}
+            }
+            return new JSONObject(safe.toString());
+        }
+    }
+
     private void drain(){
         AudioTrack track=player;
         if(track==null)return;
