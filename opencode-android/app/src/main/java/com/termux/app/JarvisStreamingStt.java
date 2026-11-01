@@ -158,6 +158,9 @@ final class JarvisStreamingStt {
             boolean hasSpeech=false;
             boolean wasPaused=false;
             int activeFrames=0;
+            int speechFrames=0;
+            int utteranceFrames=0;
+            long lastNoiseReset=SystemClock.elapsedRealtime();
             double ambientNoise=.006;
             long lastCommitAt=0L;
             long lastRecognizerResetAt=SystemClock.elapsedRealtime();
@@ -172,6 +175,7 @@ final class JarvisStreamingStt {
                     if(!wasPaused) {
                         recognizer.reset(stream);
                         hasSpeech=false;activeFrames=0;stable=0;lastTextChange=0L;
+                        speechFrames=0;utteranceFrames=0;
                         lastPartial="";lastStable="";
                     }
                     wasPaused=true;
@@ -179,6 +183,7 @@ final class JarvisStreamingStt {
                 }
                 if(wasPaused) {
                     recognizer.reset(stream);wasPaused=false;
+                    speechFrames=0;utteranceFrames=0;
                     emitState("listening");
                 }
                 float[] samples=new float[n];
@@ -196,16 +201,19 @@ final class JarvisStreamingStt {
                     ambientNoise=.985*ambientNoise+.015*rms;
                 boolean activeAudio=rms>Math.max(.012,ambientNoise*3.0);
                 if(activeAudio)activeFrames++;else activeFrames=Math.max(0,activeFrames-1);
+                if(activeAudio && hasSpeech)speechFrames++;
+                if(hasSpeech)utteranceFrames++;
                 if(activeFrames>=3) {
-                    if(!hasSpeech) {startedUtterance=now;emitState("hearing");}
+                    if(!hasSpeech) {startedUtterance=now;speechFrames=activeFrames;utteranceFrames=activeFrames;emitState("hearing");}
                     hasSpeech=true;
                     lastSpeech=now;
                 }
                 // Recycle hallucinated text accumulated during prolonged ambient
                 // noise. A fresh utterance should not inherit stale decoder state.
-                if(!hasSpeech && now-lastRecognizerResetAt>3500L){
+                if(!hasSpeech && now-lastNoiseReset>3500L){
                     recognizer.reset(stream);lastRecognizerResetAt=now;
                     lastPartial="";stable=0;lastTextChange=0L;
+                    lastNoiseReset=now;
                 }
                 stream.acceptWaveform(samples,RATE);
                 while(recognizer.isReady(stream)) recognizer.decode(stream);
@@ -231,6 +239,7 @@ final class JarvisStreamingStt {
                     if(recognizer.isEndpoint(stream) && partial.isEmpty()) {
                         recognizer.reset(stream);
                         activeFrames=0;hasSpeech=false;startedUtterance=0L;
+                        speechFrames=0;utteranceFrames=0;lastNoiseReset=now;
                         emitState("listening");
                     }
                     continue;
@@ -241,7 +250,11 @@ final class JarvisStreamingStt {
                 boolean meaningful=partial.split("\\s+").length>=2 || partial.matches("(?i)^(hello|jarvis|status|stop|pause|resume|continue|yes|no|okay)[.!?]?$");
                 // Avoid promoting random decoded noise to a user command.
                 // Speech energy must have been present for multiple frames.
-                boolean speechObserved=hasSpeech && startedUtterance>0L;
+                boolean speechObserved=hasSpeech && startedUtterance>0L && speechFrames>=6;
+                // A constant hum or short burst can produce fluent-looking nonsense.
+                // Require multiple speech-energy frames and a minimum utterance span.
+                boolean plausibleSpeech=utteranceFrames>=12 && speechFrames>=6 &&
+                    (double)speechFrames/Math.max(1,utteranceFrames)>=0.04;
                 // Native endpoint is advisory only; dialogue turn control uses silence and text stability.
                 // Stop waiting forever when microphone noise keeps the crude
                 // energy detector active. Require stable recognized text too.
@@ -249,7 +262,7 @@ final class JarvisStreamingStt {
                 long stuckLimit=incomplete?6500:4200;
                 // Ignore premature acoustic endpoints. A short pause after
                 // "I want to build a website" is not an instruction boundary.
-                boolean endOfTurn=meaningful && speechObserved && stable>=5 &&
+                boolean endOfTurn=meaningful && speechObserved && plausibleSpeech && stable>=5 &&
                     (quiet>=quietLimit && textIdle>=1600 ||
                      textIdle>=stuckLimit && quiet>=900);
                 if(endOfTurn && now-startedUtterance>=500) {
@@ -259,6 +272,7 @@ final class JarvisStreamingStt {
                     recognizer.reset(stream);
                     lastRecognizerResetAt=now;
                     hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
+                    speechFrames=0;utteranceFrames=0;lastNoiseReset=now;
                     // Avoid re-sending a recognizer loop that repeated identical audio.
                     if(!utterance.equalsIgnoreCase(lastCommitted) || now-lastCommitAt>3500) {
                         lastCommitted=utterance;
