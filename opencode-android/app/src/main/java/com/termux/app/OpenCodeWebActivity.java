@@ -83,6 +83,11 @@ public final class OpenCodeWebActivity extends Activity {
     private String pendingSpeakId;
     private JarvisConversation jarvis;
     private Button jarvisButton;
+    private JarvisDashboard dashboard;
+    private JarvisActionRouter actionRouter;
+    private JarvisEngineClient engineClient;
+    private JarvisCoordinator coordinator;
+    private boolean showEngineConsole;
     private void toggleEngineConsole() {
         showEngineConsole = !showEngineConsole;
         if (dashboard != null) dashboard.setVisibility(showEngineConsole ? View.GONE : View.VISIBLE);
