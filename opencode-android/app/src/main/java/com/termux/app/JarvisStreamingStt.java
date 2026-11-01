@@ -127,7 +127,9 @@ final class JarvisStreamingStt {
             int minimum=AudioRecord.getMinBufferSize(RATE,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
             if(minimum<=0)throw new IllegalStateException("Microphone format unsupported");
-            boolean echoAvailable=AcousticEchoCanceler.isAvailable();
+            // Disable vendor echo cancellation on VOICE_RECOGNITION input.
+            // Some device DSPs distort consonants and cause garbled Zipformer text.
+            boolean echoAvailable=false;
             // VOICE_COMMUNICATION can heavily suppress or distort phonemes on
             // vendor DSPs. Prefer unprocessed speech input for ASR.
             int inputSource=MediaRecorder.AudioSource.VOICE_RECOGNITION;
@@ -158,6 +160,7 @@ final class JarvisStreamingStt {
             int activeFrames=0;
             double ambientNoise=.006;
             long lastCommitAt=0L;
+            long lastRecognizerResetAt=SystemClock.elapsedRealtime();
             String lastCommitted="";
             while(running && !closed) {
                 int n=recorder.read(pcm,0,pcm.length,AudioRecord.READ_BLOCKING);
@@ -197,6 +200,12 @@ final class JarvisStreamingStt {
                     if(!hasSpeech) {startedUtterance=now;emitState("hearing");}
                     hasSpeech=true;
                     lastSpeech=now;
+                }
+                // Recycle hallucinated text accumulated during prolonged ambient
+                // noise. A fresh utterance should not inherit stale decoder state.
+                if(!hasSpeech && now-lastRecognizerResetAt>3500L){
+                    recognizer.reset(stream);lastRecognizerResetAt=now;
+                    lastPartial="";stable=0;lastTextChange=0L;
                 }
                 stream.acceptWaveform(samples,RATE);
                 while(recognizer.isReady(stream)) recognizer.decode(stream);
@@ -248,6 +257,7 @@ final class JarvisStreamingStt {
                     // Immediately reset the utterance, keeping the microphone
                     // open and decoding during dialogue/worker processing.
                     recognizer.reset(stream);
+                    lastRecognizerResetAt=now;
                     hasSpeech=false;activeFrames=0;stable=0;startedUtterance=0L;lastTextChange=0L;lastPartial="";
                     // Avoid re-sending a recognizer loop that repeated identical audio.
                     if(!utterance.equalsIgnoreCase(lastCommitted) || now-lastCommitAt>3500) {
