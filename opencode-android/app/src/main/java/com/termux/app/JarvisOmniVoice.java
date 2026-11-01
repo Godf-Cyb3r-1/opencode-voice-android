@@ -68,7 +68,7 @@ final class JarvisOmniVoice {
                 private volatile boolean began;
                 private volatile boolean seenAudio;
                 private volatile boolean finished;
-                private volatile int expectedRate=24000;
+                private int consecutiveUnderruns=0;
                 @Override public void onOpen(WebSocket ws,Response response) {}
                 @Override public void onMessage(WebSocket ws,String json){
                     if(ticket!=generation.get())return;
@@ -77,7 +77,6 @@ final class JarvisOmniVoice {
                         switch(data.optString("type")){
                             case "ready":
                                 sampleRate=data.optInt("sample_rate",24000);
-                                expectedRate=sampleRate;
                                 if(sampleRate<8000||sampleRate>48000)throw new IllegalStateException("Unsupported sample rate");
                                 ws.send(new JSONObject().put("type","start").put("utterance",utterance).toString());
                                 ws.send(new JSONObject().put("type","text").put("utterance",utterance).put("delta",text).toString());
@@ -86,6 +85,7 @@ final class JarvisOmniVoice {
                             case "chunk":
                                 break; // Next binary frame contains PCM.
                             case "done":
+                                if(!seenAudio){fail(ticket,id,"OmniVoice returned no PCM audio");return;}
                                 finished=true;
                                 playback.execute(()->{
                                     if(ticket!=generation.get())return;
@@ -121,19 +121,29 @@ final class JarvisOmniVoice {
                                     .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(Math.max(minimum,16384)).build();
                                 player=track;
                                 // Queue initial PCM before starting playback to reduce startup starvation.
-                                if(!began){began=true;main.post(()->events.started(id));}
                             }
                             int index=0;
+                            if(!began) {
+                                // A blocking AudioTrack.write() before play() can hang when
+                                // the first network frame exceeds the device buffer.
+                                // Prime without blocking, then start continuous playback.
+                                int primed=track.write(pcm,0,pcm.length,AudioTrack.WRITE_NON_BLOCKING);
+                                if(primed<0)throw new IllegalStateException("PCM prime failed: "+primed);
+                                index=primed;
+                                writtenFrames+=primed/2;
+                                track.play();
+                                began=true;
+                                main.post(()->{if(ticket==generation.get())events.started(id);});
+                            }
                             while(index<pcm.length && ticket==generation.get()) {
-                                int wrote=track.write(pcm,index,Math.min(8192,pcm.length-index));
+                                int wrote=track.write(pcm,index,Math.min(8192,pcm.length-index),AudioTrack.WRITE_BLOCKING);
                                 if(wrote<=0)throw new IllegalStateException("PCM write failed: "+wrote);
                                 index+=wrote;
                                 writtenFrames+=wrote/2;
-                                if(!began){
-                                    track.play();
-                                    began=true;
-                                    main.post(()->events.started(id));
-                                }
+                            }
+                            if(android.os.Build.VERSION.SDK_INT>=24) {
+                                int count=track.getUnderrunCount();
+                                if(count>consecutiveUnderruns)consecutiveUnderruns=count;
                             }
                             seenAudio=true;
                         } catch(Exception problem){fail(ticket,id,"Audio output: "+problem.getMessage());}
