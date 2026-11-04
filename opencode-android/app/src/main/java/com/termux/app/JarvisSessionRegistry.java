@@ -10,6 +10,11 @@ final class JarvisSessionRegistry {
     private final SharedPreferences store;
     JarvisSessionRegistry(Context context) {
         store=context.getApplicationContext().getSharedPreferences("jarvis_sessions_v1",Context.MODE_PRIVATE);
+        // Invalidate only legacy dialogue context when the persona contract changes.
+        // Do not discard project worker sessions or their stored summaries.
+        if(store.getInt("dialogue_persona_version",0)!=3) {
+            store.edit().remove("dialogue_id").putInt("dialogue_persona_version",3).commit();
+        }
     }
     synchronized String dialogueId(){return store.getString("dialogue_id","");}
     synchronized void setDialogueId(String id){store.edit().putString("dialogue_id",id).apply();}
