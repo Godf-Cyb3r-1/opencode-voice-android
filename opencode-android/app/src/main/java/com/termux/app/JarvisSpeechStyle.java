@@ -14,7 +14,7 @@ final class JarvisSpeechStyle {
 
     static String prepare(String raw) {
         if (raw == null) return "";
-        String text = raw
+        String text = normalizeOmniVoiceTags(raw)
             // Clock headers are not OmniVoice markers.
             .replaceAll("(?m)^\\s*\\[(?:[01]?\\d|2[0-3]):[0-5]\\d\\s*(?:AM|PM|am|pm)?\\]\\s*", "")
             .replaceAll("(?is)<think>.*?</think>", " ")
@@ -25,7 +25,6 @@ final class JarvisSpeechStyle {
             .replaceAll("(?m)`([^`]+)`", "$1")
             .replaceAll("https?://\\S+", "a web link")
             .replaceAll("\\s+", " ").trim();
-        text = normalizeOmniVoiceTags(text);
         // Only speak a meaningful, concise user-facing completion; never verbalize
         // raw terminal output, stack traces or every intermediary tool argument.
         if (text.length()>1200) text=text.substring(0,1200).trim()+"...";
