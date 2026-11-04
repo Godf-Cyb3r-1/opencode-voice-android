@@ -50,7 +50,7 @@ final class JarvisCoordinator {
         enabled=true;
         // No static welcome lines. The model is responsible for every spoken
         // word; the app merely supplies current context and a speaking event.
-        sayWithDialogue("CONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
+        sayWithDialogue(dialoguePersona()+"\nCONVERSATION ACTIVATED. Initiate a warm, brief, context-aware conversation now. "+
             "Do not pretend a task succeeded. No canned introduction. Refer to the current task only if relevant.");
     }
 
