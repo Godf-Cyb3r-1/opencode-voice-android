@@ -138,6 +138,7 @@ final class JarvisCoordinator {
                         return;
                     }
                 }
+                spoken=JarvisSpeechStyle.prepare(spoken);
                 if(!spoken.isEmpty()) events.onSpeech(spoken,"jarvis-dialogue-"+ticket);
                 if(!delegate.isEmpty()) {
                     if(!selectedProject.isEmpty() && !selectedProject.equalsIgnoreCase(project)) selectProject(selectedProject);
