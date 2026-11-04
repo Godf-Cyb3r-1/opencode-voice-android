@@ -16,7 +16,7 @@ final class JarvisSpeechStyle {
         if (raw == null) return "";
         String text = raw
             // Clock headers are not OmniVoice markers.
-            .replaceAll("(?m)^\\\\s*\\\\[(?:[01]?\\\\d|2[0-3]):[0-5]\\\\d\\\\s*(?:AM|PM|am|pm)?\\\\]\\\\s*", "")
+            .replaceAll("(?m)^\\s*\\[(?:[01]?\\d|2[0-3]):[0-5]\\d\\s*(?:AM|PM|am|pm)?\\]\\s*", "")
             .replaceAll("(?is)<think>.*?</think>", " ")
             .replaceAll("(?m)^\\s*\\[(?:thinking|tool|debug|system|action|emotion|style)[^]]*\\]\\s*", "")
             .replaceAll("(?m)^\\s*#{1,6}\\s*", "")
@@ -40,7 +40,7 @@ final class JarvisSpeechStyle {
 
     static String normalizeOmniVoiceTags(String input) {
         java.util.regex.Matcher matcher = java.util.regex.Pattern
-            .compile("\\\\[([a-z][a-z-]*)\\\\]").matcher(input);
+            .compile("\\[([a-z][a-z-]*)\\]").matcher(input);
         StringBuffer result = new StringBuffer();
         boolean found = false;
         boolean inCode = false;
