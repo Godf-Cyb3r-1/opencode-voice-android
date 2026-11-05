@@ -58,3 +58,11 @@ test("a missing configured primary retains the upstream fallback", () => {
 })
 ''')
 print('Patched Android agent selection without changing worker-tool authorization')
+
+# Action-specific descriptions use the existing persistent once/always/reject controls.
+edit('packages/app/src/session/requests/session-permission-dock.tsx',
+    '  const toolDescription = () => {',
+    '  const toolDescription = () => {\n    if (typeof props.request.metadata?.description === "string") return props.request.metadata.description')
+edit('packages/app/src/session/requests/session-permission-dock.tsx',
+    '      <Show when={props.request.resources.length > 0}>',
+    '      <Show when={typeof props.request.metadata?.saveDescription === "string"}>\n        <div data-slot="permission-row"><div data-slot="permission-hint">{String(props.request.metadata?.saveDescription)}</div></div>\n      </Show>\n      <Show when={props.request.resources.length > 0}>')
