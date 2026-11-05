@@ -4,6 +4,7 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { Effect, Schema, Semaphore } from "effect"
 import { Session } from "../session.js"
 import { KV } from "../kv.js"
+import { PermissionSaved } from "../permission/saved.js"
 import type { Tool } from "@opencode/schema/tool"
 import { completed, describe, expand, iterationSource, parameterize, resolve, screenOf, selectorFor, type Recipe, type Screen, type Step } from "./android-workflows.js"
 
@@ -18,7 +19,7 @@ const Fields = {
 }
 const PhoneInput=Schema.Struct(Fields)
 const WorkflowInput=Schema.Struct({
-  action:Schema.Literals(["list","run","sequence","remember","delete"]),
+  action:Schema.Literals(["list","run","sequence","remember","delete","approvals","reset_approvals"]),
   name:Schema.optional(Schema.String),description:Schema.optional(Schema.String),
   parameters:Schema.optional(Schema.Record(Schema.String,Schema.String)),
   steps:Schema.optional(Schema.Array(PhoneInput)),
@@ -32,6 +33,7 @@ export const Plugin=define({
     if(!process.env.JARVIS_ANDROID_URL || !process.env.JARVIS_ANDROID_TOKEN)return
     const sessions=yield* Session.Service
     const kv=yield* KV.Service
+    const savedPermissions=yield* PermissionSaved.Service
     const device=yield* Semaphore.make(1)
     const screens=new Map<string,Screen>()
     const traces=new Map<string,{source:string;steps:Step[];replayable:boolean}>()
@@ -46,7 +48,7 @@ export const Plugin=define({
     const approval=(context:Pick<Tool.Context,"sessionID"|"agent"|"messageID"|"id">,action:string,resource:string,description:string)=>ctx.permission.assert({
       sessionID:context.sessionID,agent:context.agent,action,resources:[resource],save:[resource],
       source:{type:"tool",messageID:context.messageID,id:context.id},
-      metadata:{description,saveDescription:`Always allow ${resource} in this OpenCode project. Manage saved approvals in Settings → Permissions.`},
+      metadata:{description,saveDescription:`Always allow ${resource} in this OpenCode project. Ask Jarvis to list or reset debug approvals using phone_workflow.`},
     })
     // Show debug approvals for controller/worker actions too. Phone recipes prompt each contained action instead.
     yield* ctx.tool.hook("execute.before",event=>{
@@ -138,6 +140,12 @@ export const Plugin=define({
         }while(after)
         return JSON.stringify({workflows:recipes.map(r=>({...r,steps:r.steps,requiredParameters:[...new Set(JSON.stringify(r.steps).match(/\$\{[a-zA-Z][a-zA-Z0-9_]*\}/g)??[])]}))})
       }
+      if(input.action==="approvals" || input.action==="reset_approvals"){
+        yield* approval(context,"android.debug.workflow",input.action,input.action==="approvals" ? "List saved debug action approvals in this project" : "Reset saved debug action approvals in this project; future actions will ask again")
+        const saved=(yield* savedPermissions.list({projectID})).filter(p=>p.action.startsWith("android.debug."))
+        if(input.action==="reset_approvals")for(const item of saved)yield* savedPermissions.remove(item.id)
+        return JSON.stringify({status:input.action==="approvals"?"listed":"reset",approvals:input.action==="approvals"?saved:undefined,count:saved.length})
+      }
       if(input.action!=="sequence" && !name)return yield* new ToolFailure({message:"Workflow name required"})
       if(input.action==="delete"){
         yield* approval(context,"android.debug.workflow",`delete:${name}`,`Delete saved workflow ${name}`)
@@ -178,7 +186,7 @@ export const Plugin=define({
     yield* ctx.tool.transform(editor=>{
       editor.add({name:"phone",options:{codemode:false},description:"Native Android actions: status, contacts(query), apps, open(packageName), screen, ui(node or stable selector,operation,text), back/home, call(contact), notifications, notification_reply and audit. UI results include the resulting screen; reuse it. Debug approval shows the exact action with Allow once/Always allow. Prefer send_whatsapp_message for messages; phone_workflow for reusable or multi-step sequences.",input:PhoneInput,output:Schema.String,execute})
       editor.add({name:"send_whatsapp_message",options:{codemode:false},description:"Send the exact message to a saved contact in ONE native operation, resolving recipient and backing up old drafts. Verifies visible submission, not delivery. Debug approval before sending. A successful first send automatically saves parameterized whatsapp-message workflow.",input:Schema.Struct({contact:Schema.String,message:Schema.String,contactId:Schema.optional(Schema.String),phoneNumber:Schema.optional(Schema.String),packageName:Schema.optional(Schema.Literals(["com.whatsapp","com.whatsapp.w4b"]))}),output:Schema.String,execute:(input,context)=>execute({action:"whatsapp_send",contact:input.contact,text:input.message,contactId:input.contactId,phoneNumber:input.phoneNumber,packageName:input.packageName},context)})
-      editor.add({name:"phone_workflow",options:{codemode:false},description:"Reusable local phone toolkit. list discovers learned workflows. run(name,parameters,repetitions) replays without a model call between steps. sequence(steps,repetitions) executes a planned series; UI uses unique stable selector {viewId,text,description}, never stored node refs. Every action still uses OpenCode debug approval. remember(name,description,parameters) learns the current successful user-turn trace; parameter map is name→observed literal value, replaced with ${name} for later runs. Call automatically after verified task success. delete removes a recipe. Returns failing step and actual state for iterative repair; never replays completed side effects automatically. No arbitrary code or new MCP server installation required.",input:WorkflowInput,output:Schema.String,execute:(input,context)=>workflow(input,context).pipe(Effect.map(output=>({output,content:output})),Effect.mapError(error=>error instanceof ToolFailure?error:new ToolFailure({message:"Phone workflow failed",error})))})
+      editor.add({name:"phone_workflow",options:{codemode:false},description:"Reusable local phone toolkit. list discovers learned workflows. run(name,parameters,repetitions) replays without a model call between steps. sequence(steps,repetitions) executes a planned series; UI uses unique stable selector {viewId,text,description}, never stored node refs. Every action still uses OpenCode debug approval. remember(name,description,parameters) learns the current successful user-turn trace; parameter map is name→observed literal value, replaced with ${name} for later runs. Call automatically after verified task success. delete removes a recipe. approvals lists saved debug approvals; reset_approvals removes them so actions ask again. Returns failing step and actual state for iterative repair; never replays completed side effects automatically. No arbitrary code or new MCP server installation required.",input:WorkflowInput,output:Schema.String,execute:(input,context)=>workflow(input,context).pipe(Effect.map(output=>({output,content:output})),Effect.mapError(error=>error instanceof ToolFailure?error:new ToolFailure({message:"Phone workflow failed",error})))})
     })
   }),
 })

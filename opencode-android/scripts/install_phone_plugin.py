@@ -39,4 +39,8 @@ p=root/'packages/core/src/plugin/internal.ts';s=p.read_text();s=s.replace('impor
 s=s.replace('  JarvisControlTools.Plugin,','  JarvisControlTools.Plugin,\n  AndroidPhone.Plugin,',1);p.write_text(s)
 p=root/'packages/core/src/jarvis/agent.ts';s=p.read_text().replace('export const permissions = [','export const permissions = [',1)
 s=s.replace('  { action: "command_run", resource: "*", effect: "allow" },','  { action: "command_run", resource: "*", effect: "allow" },\n  { action: "phone", resource: "*", effect: "allow" },\n  { action: "send_whatsapp_message", resource: "*", effect: "allow" },',1);p.write_text(s)
+p=root/'packages/core/src/plugin/internal.ts';s=p.read_text()
+s='import { PermissionSaved } from "../permission/saved.js"\n'+s
+s=s.replace('  Permission.node,','  Permission.node,\n  PermissionSaved.node,',1)
+p.write_text(s)
 assert 'AndroidPhone.Plugin' in (root/'packages/core/src/plugin/internal.ts').read_text()
