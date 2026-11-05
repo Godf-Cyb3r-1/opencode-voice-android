@@ -5,7 +5,7 @@ import { Effect, Schema, Semaphore } from "effect"
 import { Session } from "../session.js"
 import { KV } from "../kv.js"
 import type { Tool } from "@opencode/schema/tool"
-import { completed, describe, expand, parameterize, resolve, screenOf, selectorFor, type Recipe, type Screen, type Step } from "./android-workflows.js"
+import { completed, describe, expand, iterationSource, parameterize, resolve, screenOf, selectorFor, type Recipe, type Screen, type Step } from "./android-workflows.js"
 
 const Selector = Schema.Struct({viewId:Schema.optional(Schema.String),text:Schema.optional(Schema.String),description:Schema.optional(Schema.String)})
 const Fields = {
@@ -96,7 +96,7 @@ export const Plugin=define({
         try{node=resolve(before,selector).node}catch(error){return {status:"failed",error:String(error),screen:before}}
         prepared={...prepared,node}
       }
-      const result=yield* transport(prepared,source)
+      const result=yield* transport(prepared,source).pipe(Effect.catch(error=>Effect.succeed({status:"failed",error:error.message,outcomeUnknown:true})))
       const screen=screenOf(result)
       if(screen)screens.set(context.sessionID,screen)
       const trace=traces.get(context.sessionID)!
@@ -166,7 +166,7 @@ export const Plugin=define({
       return yield* device.withPermit(Effect.gen(function*(){
         const results:any[]=[]
         for(let iteration=0;iteration<repetitions;iteration++)for(let index=0;index<steps.length;index++){
-          const result=yield* step(steps[index]!,context,`${source}:workflow:${iteration}:${index}`)
+          const result=yield* step(steps[index]!,context,iterationSource(source,iteration))
           results.push({iteration:iteration+1,step:index+1,status:result.status??"observed",elapsedMs:result.elapsedMs})
           yield* context.progress({workflow:name??"sequence",iteration:iteration+1,step:index+1,total:steps.length})
           if(!completed(result))return JSON.stringify({status:"needs_repair",completedSteps:results.slice(0,-1),iteration:iteration+1,step:index+1,result,note:"Earlier steps already executed. Repair from this observed state; do not restart and duplicate earlier side effects."})

@@ -66,3 +66,6 @@ export function describe(step:Step):string {
   if (step.action === "ui") return `${step.operation}${app}: ${JSON.stringify(step.selector ?? {})}${step.text === undefined ? "" : ` → ${JSON.stringify(step.text)}`}`
   return `${step.action}${app}${step.query ? `: ${step.query}` : ""}`
 }
+
+/** Replaying a first iteration shares the direct action's receipt identity. */
+export const iterationSource = (source:string, iteration:number) => iteration === 0 ? source : `${source}:repeat:${iteration}`

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { resolve, selectorFor, parameterize, expand, completed, describe, type Screen } from "./android-workflows"
+import { resolve, selectorFor, parameterize, expand, completed, describe, iterationSource, type Screen } from "./android-workflows"
 const screen:Screen={package:"app",nodes:[{node:"1:0",viewId:"app:id/next",text:"Next",enabled:true},{node:"1:1",viewId:"app:id/row",text:"Alice"},{node:"1:2",viewId:"app:id/row",text:"Bob"}]}
 test("learned selectors survive regenerated snapshot refs",()=>{
   const selector=selectorFor(screen,"1:2")
@@ -27,4 +27,9 @@ test("unobserved actions and uncertain sends never become successful learning ex
 })
 test("debug description contains the exact recipient and message",()=>{
   expect(describe({action:"whatsapp_send",contact:"Bob",text:"Hi"})).toBe('Send WhatsApp message to Bob: "Hi"')
+})
+
+test("direct and first replay share send receipts while requested repeats are distinct",()=>{
+  expect(iterationSource("session:request",0)).toBe("session:request")
+  expect(iterationSource("session:request",1)).toBe("session:request:repeat:1")
 })
