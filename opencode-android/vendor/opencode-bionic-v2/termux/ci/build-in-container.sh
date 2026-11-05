@@ -205,6 +205,9 @@ echo "=== POST-BUILD: verify native Jarvis ==="
 /out/opencode --version | grep -F '2.2.5'
 mkdir -p "$HOME/jarvis-smoke"
 cd "$HOME/jarvis-smoke"
+# Activate the real phone plugin during smoke checks; no phone actions are invoked.
+export JARVIS_ANDROID_URL=http://127.0.0.1:49177
+export JARVIS_ANDROID_TOKEN=ci-not-a-device-token
 timeout 120 /out/opencode debug agents --standalone > /out/agents.json
 python3 - <<'PYVERIFY'
 import json
@@ -213,6 +216,8 @@ j=next(a for a in agents if a['id']=='jarvis')
 assert j.get('model') is None
 assert 'JARVIS_PERSONA_VERSION_UNIVERSAL_V2' in j['system']
 assert any(p['action']=='memory_find' and p['effect']=='allow' for p in j['permissions'])
+assert any(p['action']=='phone_workflow' and p['effect']=='allow' for p in j['permissions'])
+assert any(p['action']=='android.debug.*' and p['effect']=='ask' for p in j['permissions'])
 PYVERIFY
 OPENCODE_PASSWORD=ci-smoke /out/opencode serve --hostname 127.0.0.1 --port 49176 > /out/server.log 2>&1 &
 server=$!
