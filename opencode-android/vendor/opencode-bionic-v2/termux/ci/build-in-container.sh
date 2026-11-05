@@ -131,7 +131,7 @@ PTYD_VERSION="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['ptyService']['version'])")"
 PTYD_URL="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['ptyService']['assetUrl'])")"
-PTYD_PKG="$BUILD_ROOT/node_modules/@opencode-ai/pty-linux-arm64-gnu"
+PTYD_PKG="$BUILD_ROOT/node_modules/@opencode/pty-linux-arm64-gnu"
 mkdir -p "$PTYD_PKG/bin"
 echo "→ fetching Bionic opencode-pty daemon $PTYD_VERSION"
 curl -fsSL -o "$PTYD_PKG/bin/opencode-pty" "$PTYD_URL"
@@ -151,7 +151,7 @@ then
 fi
 cat > "$PTYD_PKG/package.json" <<PKGJSON
 {
-  "name": "@opencode-ai/pty-linux-arm64-gnu",
+  "name": "@opencode/pty-linux-arm64-gnu",
   "version": "$PTYD_VERSION",
   "description": "OpenCode persistent PTY service for linux-arm64 (Bionic build)",
   "license": "MIT",

@@ -16,15 +16,11 @@ old = '''  const opencodePty = await resolveOpencodePty({
     ...(item.os === "linux" ? { libc: item.abi ?? "glibc" } : {}),
   })'''
 assert old in s, 'Pinned PTY build adapter no longer matches'
-s = s.replace(old, '''  let opencodePty
-  try {
-    opencodePty = await resolveOpencodePty({
-      platform: item.os,
-      arch: item.arch,
-      ...(item.os === "linux" ? { libc: item.abi ?? "glibc" } : {}),
-    })
-  } catch (error) {
-    if (process.platform !== "android" && process.env.TERMUX_VERSION === undefined) throw error
+s = s.replace(old, '''  const source = path.join(dir, "../../node_modules/@opencode/pty-linux-arm64-gnu/bin/opencode-pty")
+  const opencodePty = {
+    source,
+    version: "0.2.0",
+    sha256: createHash("sha256").update(Buffer.from(await Bun.file(source).arrayBuffer())).digest("hex"),
   }''')
 s = s.replace('contents: `export default () => require(${JSON.stringify(parcelWatcherPackage)})`,', 'contents: `export default () => { throw new Error("Android uses filesystem watch fallback") }`,')
 s = s.replace('bytecode: true,', 'bytecode: false,').replace('splitting: true,', 'splitting: false,')

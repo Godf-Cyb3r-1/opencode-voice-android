@@ -47,7 +47,9 @@ class InputIntegrity(unittest.TestCase):
                 self.assertEqual(int.from_bytes(header[18:20], 'little'), 183)  # ARM64
                 h.update(header)
                 for chunk in iter(lambda: f.read(1024 * 1024), b''): h.update(chunk)
-            self.assertEqual(h.hexdigest(), lock['runtime']['binary_sha256'])
+            manifest = json.loads((ROOT / 'app/src/main/assets/engine/manifest.json').read_text())
+            self.assertEqual(h.hexdigest(), manifest['sha256'])
+            self.assertEqual(manifest['commit'], lock['opencode']['commit'])
             self.assertEqual(z.read('bin/opencode-android-session'), (ROOT / 'runtime/opencode-android-session').read_bytes())
             self.assertIn('SYMLINKS.txt', z.namelist())
             self.assertIn('bin/bash', z.namelist())
