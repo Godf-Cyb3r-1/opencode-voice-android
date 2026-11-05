@@ -63,6 +63,10 @@ public final class JarvisM9Activity extends Activity {
         controls.setText("Engine");
         controls.setOnClickListener(v -> controls());
         bar.addView(controls);
+        Button phone = new Button(this);
+        phone.setText("Phone");
+        phone.setOnClickListener(v -> phoneControls());
+        bar.addView(phone);
         root.addView(bar);
         web = new WebView(this);
         web.setBackgroundColor(0xff12151b);
@@ -114,6 +118,36 @@ public final class JarvisM9Activity extends Activity {
             bootstrapped = true;
             startEngine();
         });
+    }
+
+    private void phoneControls() {
+        android.content.SharedPreferences prefs = OpenCodeWebService.preferences(this);
+        String state = prefs.getBoolean("phone_enabled", false) ? "enabled" : "paused";
+        new AlertDialog.Builder(this).setTitle("Phone controls · " + state)
+            .setItems(new String[]{"Enable phone controls + contacts", "Accessibility settings", "Notification access", "Set as default assistant", "Allow calls", "Pause all phone controls", "Status"}, (dialog, choice) -> {
+                if (choice == 0) {
+                    prefs.edit().putBoolean("phone_enabled", true).apply();
+                    if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                        requestPermissions(new String[]{android.Manifest.permission.READ_CONTACTS}, 51);
+                }
+                if (choice == 1) startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                if (choice == 2) startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+                if (choice == 3) {
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        android.app.role.RoleManager roles = getSystemService(android.app.role.RoleManager.class);
+                        if (roles.isRoleAvailable(android.app.role.RoleManager.ROLE_ASSISTANT) && !roles.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT))
+                            startActivityForResult(roles.createRequestRoleIntent(android.app.role.RoleManager.ROLE_ASSISTANT), 52);
+                        else startActivity(new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS));
+                    } else startActivity(new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS));
+                }
+                if (choice == 4) requestPermissions(new String[]{android.Manifest.permission.CALL_PHONE}, 53);
+                if (choice == 5) prefs.edit().putBoolean("phone_enabled", false).apply();
+                if (choice == 6) new AlertDialog.Builder(this).setTitle("Phone status").setMessage(
+                    "Controls: " + state + "\nContacts: " + (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED) +
+                    "\nAccessibility: " + (PhoneAccessibilityService.active != null) + "\nNotifications: " + (PhoneNotificationService.active != null) +
+                    "\nGrant permissions and enable Jarvis phone control once. Then use chat to request actions. Keep the device unlocked for screen actions.")
+                    .setPositiveButton("Close", null).show();
+            }).setNegativeButton("Close", null).show();
     }
 
     private void startEngine() {

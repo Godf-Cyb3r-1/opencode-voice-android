@@ -23,7 +23,9 @@ jobs:
         with:
           path: android-host
       - name: Apply Android composer selection fix
-        run: python3 android-host/opencode-android/scripts/patch_m9_ui.py .
+        run: |
+          python3 android-host/opencode-android/scripts/patch_m9_ui.py .
+          python3 android-host/opencode-android/scripts/install_phone_plugin.py . android-host/opencode-android/vendor/opencode-bionic-v2/termux/ci/android-phone.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.4'
@@ -31,7 +33,7 @@ jobs:
         id: app-cache
         with:
           path: jarvis-app.bin
-          key: jarvis-m9-agent-selection-v2-b6fb280c66217dcdfabec5a0d19de58da82371e0
+          key: jarvis-phone-v1-b6fb280c66217dcdfabec5a0d19de58da82371e0
       - run: bun install --frozen-lockfile
         if: steps.app-cache.outputs.cache-hit != 'true' 
       - name: Verify M9 core and build matching application
@@ -124,6 +126,7 @@ jobs:
           rm -rf app/src/main/assets/web-ui
           chmod +x gradlew
           bash scripts/build.sh
+          ./gradlew --no-daemon :app:testDebugUnitTest --tests com.termux.app.PhonePolicyTest
           mkdir -p ../release
           cp app/build/outputs/apk/debug/*universal*.apk ../release/Jarvis-M9-Android.apk || cp app/build/outputs/apk/debug/*.apk ../release/Jarvis-M9-Android.apk
           unzip -p ../release/Jarvis-M9-Android.apk assets/engine/manifest.json > ../release/ENGINE_MANIFEST.json

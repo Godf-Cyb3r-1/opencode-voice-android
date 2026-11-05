@@ -33,3 +33,7 @@ file.write_text(s)
 assert 'memory_find' in (root / 'packages/core/src/jarvis/agent.ts').read_text()
 assert 'JARVIS_PERSONA_VERSION_UNIVERSAL_V2' in (root / 'jarvis/persona.md').read_text()
 print('Applied Android adapters; Jarvis persona, memory and controller code retained')
+
+# Install native phone tools without changing the approved persona text.
+import subprocess
+subprocess.run(["python3", str(Path(__file__).resolve().parent / "install_phone_plugin.py"), str(root), str(Path(__file__).resolve().parent / "android-phone.ts")], check=True)

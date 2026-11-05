@@ -45,6 +45,7 @@ public final class OpenCodeWebService extends Service {
     private volatile Process engine;
     private volatile boolean stopping;
     private Thread worker;
+    private PhoneBridge phoneBridge;
     private PowerManager.WakeLock wakeLock;
     private long renewedAt;
     static volatile String engineVersion = "";
@@ -155,6 +156,7 @@ public final class OpenCodeWebService extends Service {
     private void runEngine() {
         try {
             protectBackground();
+            if (phoneBridge == null) phoneBridge = new PhoneBridge(this);
             state = "upgrading";
             detail = getString(R.string.oc_upgrading);
             // Check device compatibility before replacing any installed executable.
@@ -171,11 +173,11 @@ public final class OpenCodeWebService extends Service {
             port = preferred;
             token(this);
             if (preferred != 0 && healthy()) {
-                state = "ready";
-                publishConnection();
-                foreground();
-                monitor();
-                return;
+                // A replacement engine must inherit the current native bridge endpoint.
+                stopEngine();
+                long exitDeadline = SystemClock.elapsedRealtime() + 5000;
+                while (healthy() && SystemClock.elapsedRealtime() < exitDeadline) Thread.sleep(100);
+                if (healthy()) throw new IllegalStateException("Previous engine did not stop; use Engine > Stop and retry.");
             }
             try (ServerSocket socket = new ServerSocket()) {
                 try { socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), preferred)); }
@@ -202,6 +204,8 @@ public final class OpenCodeWebService extends Service {
             env.put("LANG", "C.UTF-8");
             env.put("TERM", "xterm-256color");
             env.put("OPENCODE_PASSWORD", preferences(this).getString("password", ""));
+            env.put("JARVIS_ANDROID_URL", phoneBridge.url());
+            env.put("JARVIS_ANDROID_TOKEN", phoneBridge.token);
             env.put("OPENCODE_CONFIG_CONTENT", "{\"default_agent\":\"jarvis\"}");
             env.put("OPENCODE_DISABLE_FFF", "1");
             env.put("OPENCODE_DISABLE_CHANNEL_DB", "1");
@@ -328,6 +332,7 @@ public final class OpenCodeWebService extends Service {
         releaseProtection();
         if (worker != null) worker.interrupt();
         state = "stopped";
+        if (phoneBridge != null) { phoneBridge.close(); phoneBridge = null; }
         stopForeground(true);
         super.onDestroy();
     }
