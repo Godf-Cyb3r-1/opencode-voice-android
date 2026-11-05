@@ -43,7 +43,7 @@ export const Plugin=define({
           agent.permissions.push({action:name,resource:"*",effect:"allow"})
       })
     })
-    const approval=(context:Tool.Context,action:string,resource:string,description:string)=>ctx.permission.assert({
+    const approval=(context:Pick<Tool.Context,"sessionID"|"agent"|"messageID"|"id">,action:string,resource:string,description:string)=>ctx.permission.assert({
       sessionID:context.sessionID,agent:context.agent,action,resources:[resource],save:[resource],
       source:{type:"tool",messageID:context.messageID,id:context.id},
       metadata:{description,saveDescription:`Always allow ${resource} in this OpenCode project. Manage saved approvals in Settings → Permissions.`},

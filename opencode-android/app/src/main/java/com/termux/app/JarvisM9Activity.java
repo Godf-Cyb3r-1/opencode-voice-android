@@ -78,8 +78,8 @@ public final class JarvisM9Activity extends Activity {
             @Override public void onPageFinished(WebView view, String url) {
                 if (loadedOrigin == null || !url.startsWith(loadedOrigin + "/")) return;
                 android.content.SharedPreferences prefs = OpenCodeWebService.preferences(JarvisM9Activity.this);
-                if (prefs.getInt("jarvis_ui_revision", 0) >= 2) return;
-                prefs.edit().putInt("jarvis_ui_revision", 2).apply();
+                if (prefs.getInt("jarvis_ui_revision", 0) >= 3) return;
+                prefs.edit().putInt("jarvis_ui_revision", 3).apply();
                 view.clearCache(true);
                 view.evaluateJavascript("(async()=>{if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();}if('caches' in window){for(const k of await caches.keys())await caches.delete(k);}location.reload();})().catch(()=>location.reload())", null);
             }
