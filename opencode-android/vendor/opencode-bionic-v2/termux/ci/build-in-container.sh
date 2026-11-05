@@ -87,6 +87,20 @@ bash /workspace/termux/ci/prepare-build-tree.sh "${FETCH_ARGS[@]}"
 cd "$BUILD_ROOT"
 bun install
 
+# Bun Android's ws builtin loses the namespace binding for export-star.
+# Keep the same ws public exports using named re-exports instead.
+python3 - <<'PYWS'
+from pathlib import Path
+files=list(Path('node_modules/.bun').glob('@effect+platform-node-shared@*/node_modules/@effect/platform-node-shared/dist/NodeWS.js'))
+assert files, 'Effect NodeWS adapter not found'
+for file in files:
+    text=file.read_text()
+    old='export * from "ws";'
+    assert old in text, 'Unexpected Effect NodeWS export shape'
+    file.write_text(text.replace(old,'export { WebSocket, WebSocketServer, Receiver, Sender, createWebSocketStream } from "ws";'))
+print('Patched ws re-export for the Android Bun bundler')
+PYWS
+
 # Terminal sessions ride on bun-pty, whose npm prebuilt is glibc-linked
 # (libpthread.so.0) and cannot dlopen on Bionic. Overwrite the npm artifact
 # with the Bionic build published by bun-termux, matched to the bun-pty
