@@ -51,14 +51,14 @@ if [ -n "$REF" ]; then
   echo "→ fetching anomalyco/opencode at ref $REF into $TARGET"
   mkdir -p "$TARGET"
   git -C "$TARGET" init -q
-  git -C "$TARGET" remote add origin https://github.com/anomalyco/opencode.git
+  git -C "$TARGET" remote add origin https://github.com/Godf-Cyb3r-1/jarvis-opencode.git
   git -C "$TARGET" fetch -q --depth 1 origin "$REF"
   git -C "$TARGET" checkout -q FETCH_HEAD
   DESC="$REF"
 else
   TAG="v${VERSION#v}"
   echo "→ cloning anomalyco/opencode $TAG into $TARGET"
-  git clone --depth 1 -b "$TAG" https://github.com/anomalyco/opencode.git "$TARGET"
+  git clone --depth 1 -b "$TAG" https://github.com/Godf-Cyb3r-1/jarvis-opencode.git "$TARGET"
   DESC="$TAG"
 fi
 

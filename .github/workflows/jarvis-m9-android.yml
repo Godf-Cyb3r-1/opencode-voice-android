@@ -1,0 +1,139 @@
+name: Jarvis M9 Android
+on:
+  workflow_dispatch:
+  push:
+    branches: [jarvis-m9-android]
+permissions:
+  contents: read
+concurrency:
+  group: jarvis-m9-android-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  JARVIS_SHA: b6fb280c66217dcdfabec5a0d19de58da82371e0
+jobs:
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Godf-Cyb3r-1/jarvis-opencode
+          ref: b6fb280c66217dcdfabec5a0d19de58da82371e0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - name: Verify M9 core and build matching application
+        env:
+          OPENCODE_VERSION: '2.2.5'
+          OPENCODE_CHANNEL: latest
+        run: |
+          cd packages/core
+          bun test src/jarvis/
+          bun run typecheck
+          cd ../..
+          bun -e 'import { buildAppArchive } from "./packages/cli/script/app-assets.ts"; await Bun.write("jarvis-app.bin", await buildAppArchive("latest"))'
+          test -s jarvis-app.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-m9-app-archive
+          path: jarvis-app.bin
+          retention-days: 7
+  engine:
+    needs: app
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jarvis-m9-app-archive
+          path: opencode-android/vendor/opencode-bionic-v2
+      - name: Compile and smoke-test native Android M9 engine
+        env:
+          OPENCODE_VERSION: '2.2.5'
+          OPENCODE_CHANNEL: latest
+          OPENCODE_UPSTREAM_REF: b6fb280c66217dcdfabec5a0d19de58da82371e0
+        run: |
+          export GITHUB_WORKSPACE="$GITHUB_WORKSPACE/opencode-android/vendor/opencode-bionic-v2"
+          bash "$GITHUB_WORKSPACE/termux/ci/build-on-runner.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-m9-android-engine
+          path: |
+            opencode-android/vendor/out/opencode
+            opencode-android/vendor/out/opencode.sha256
+            opencode-android/vendor/out/agents.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: jarvis-m9-engine-diagnostics
+          path: opencode-android/vendor/out/*.log
+          if-no-files-found: ignore
+  apk:
+    needs: engine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jarvis-m9-android-engine
+          path: engine-build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: actions/cache@v4
+        with:
+          path: opencode-android/app/local-debug.jks
+          key: jarvis-m9-android-debug-signing-v1
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 dpkg-dev unzip zip
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865'
+      - name: Build APK with pinned native engine
+        working-directory: opencode-android
+        env:
+          JARVIS_ANDROID_BINARY: ${{ github.workspace }}/engine-build/opencode
+          TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS: '0'
+        run: |
+          chmod +x gradlew
+          bash scripts/build.sh
+          mkdir -p ../release
+          cp app/build/outputs/apk/debug/*universal*.apk ../release/Jarvis-M9-Android.apk || cp app/build/outputs/apk/debug/*.apk ../release/Jarvis-M9-Android.apk
+          unzip -p ../release/Jarvis-M9-Android.apk assets/engine/manifest.json > ../release/ENGINE_MANIFEST.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          manifest=json.loads(Path('../release/ENGINE_MANIFEST.json').read_text())
+          assert manifest['commit']==os.environ['JARVIS_SHA']
+          assert manifest['version']=='2.2.5'
+          PY
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify ../release/Jarvis-M9-Android.apk
+          printf '%s\n' "$JARVIS_SHA" > ../release/JARVIS_COMMIT_SHA
+          printf '%s\n' "$GITHUB_SHA" > ../release/ANDROID_COMMIT_SHA
+          cd ../release
+          sha256sum Jarvis-M9-Android.apk > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-M9-Android-APK
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish direct APK download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "jarvis-m9-android-${GITHUB_RUN_ID}" release/* \
+            --target "$GITHUB_SHA" --prerelease \
+            --title 'Jarvis M9 Android' \
+            --notes 'Android arm64 APK with the local OpenCode 2.2.5 M9 engine and matching application interface. Approved persona, automatic memory and worker tools retained. Native engine startup and agent checks passed in Termux Docker; physical-device acceptance remains required. Voice integration is deferred.'

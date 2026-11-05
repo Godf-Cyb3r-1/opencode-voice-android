@@ -48,7 +48,7 @@
         android:allowBackup="false"
         android:banner="@drawable/banner"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/application_name"
+        android:label="Jarvis M9"
         android:requestLegacyExternalStorage="true"
         android:networkSecurityConfig="@xml/opencode_network_security"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -56,8 +56,8 @@
         android:theme="@style/Theme.TermuxApp.DayNight.DarkActionBar"
         tools:targetApi="m">
 
-        <activity android:name=".app.OpenCodeWebActivity" android:exported="true"
-            android:label="@string/application_name" android:launchMode="singleTask"
+        <activity android:name=".app.JarvisM9Activity" android:exported="true"
+            android:label="Jarvis M9" android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Material.NoActionBar">
             <intent-filter>
@@ -65,13 +65,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".app.OpenCodeWebActivity" android:exported="false" android:theme="@android:style/Theme.Material.NoActionBar" />
         <service android:name=".app.OpenCodeWebService" android:exported="false" android:stopWithTask="false" />
 
         <activity
             android:name=".app.TermuxActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|density|screenLayout|keyboard|keyboardHidden|navigation"
-            android:label="@string/application_name"
+            android:label="Jarvis M9"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:theme="@style/Theme.TermuxActivity.DayNight.NoActionBar"
@@ -98,7 +99,7 @@
         <activity
             android:name=".app.activities.HelpActivity"
             android:exported="false"
-            android:label="@string/application_name"
+            android:label="Jarvis M9"
             android:parentActivityName=".app.TermuxActivity"
             android:resizeableActivity="true"
             tools:targetApi="n" />

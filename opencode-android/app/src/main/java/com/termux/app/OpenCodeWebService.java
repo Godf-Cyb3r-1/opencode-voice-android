@@ -109,7 +109,7 @@ public final class OpenCodeWebService extends Service {
     }
 
     private void foreground() {
-        Intent open = new Intent(this, OpenCodeWebActivity.class);
+        Intent open = new Intent(this, JarvisM9Activity.class);
         PendingIntent launch = PendingIntent.getActivity(this, 4102, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Intent stop = new Intent(this, OpenCodeWebService.class).setAction(STOP);
         PendingIntent quit = PendingIntent.getService(this, 4103, stop, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
@@ -202,6 +202,7 @@ public final class OpenCodeWebService extends Service {
             env.put("LANG", "C.UTF-8");
             env.put("TERM", "xterm-256color");
             env.put("OPENCODE_PASSWORD", preferences(this).getString("password", ""));
+            env.put("OPENCODE_CONFIG_CONTENT", "{\"default_agent\":\"jarvis\"}");
             env.put("OPENCODE_DISABLE_FFF", "1");
             env.put("OPENCODE_DISABLE_CHANNEL_DB", "1");
             env.put("OPENCODE_SERVER_USERNAME", "opencode");
@@ -280,7 +281,7 @@ public final class OpenCodeWebService extends Service {
         try {
             JSONObject info = new JSONObject(request(this, "/api/info", 16384));
             String version = info.optString("version");
-            if (!version.startsWith("2.1.4")) return false;
+            if (!version.startsWith("2.2.5")) return false;
             engineVersion = version;
             enginePid = info.optInt("pid", 0);
             lastHealthy = SystemClock.elapsedRealtime();
