@@ -19,6 +19,11 @@ jobs:
         with:
           repository: Godf-Cyb3r-1/jarvis-opencode
           ref: b6fb280c66217dcdfabec5a0d19de58da82371e0
+      - uses: actions/checkout@v4
+        with:
+          path: android-host
+      - name: Apply Android composer selection fix
+        run: python3 android-host/opencode-android/scripts/patch_m9_ui.py .
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.4'
@@ -26,7 +31,7 @@ jobs:
         id: app-cache
         with:
           path: jarvis-app.bin
-          key: jarvis-m9-web-b6fb280c66217dcdfabec5a0d19de58da82371e0
+          key: jarvis-m9-agent-selection-v2-b6fb280c66217dcdfabec5a0d19de58da82371e0
       - run: bun install --frozen-lockfile
         if: steps.app-cache.outputs.cache-hit != 'true' 
       - name: Verify M9 core and build matching application
@@ -37,6 +42,9 @@ jobs:
         run: |
           cd packages/core
           bun test src/jarvis/
+          bun run typecheck
+          cd ../app
+          bun test src/providers/models/agent.test.ts
           bun run typecheck
           cd ../..
           bun -e 'import { buildAppArchive } from "./packages/cli/script/app-assets.ts"; await Bun.write("jarvis-app.bin", await buildAppArchive("latest"))'
