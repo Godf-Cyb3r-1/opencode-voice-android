@@ -124,7 +124,7 @@ public final class JarvisM9Activity extends Activity {
         android.content.SharedPreferences prefs = OpenCodeWebService.preferences(this);
         String state = prefs.getBoolean("phone_enabled", false) ? "enabled" : "paused";
         new AlertDialog.Builder(this).setTitle("Phone controls · " + state)
-            .setItems(new String[]{"Enable phone controls + contacts", "Accessibility settings", "Notification access", "Set as default assistant", "Allow calls", "Pause all phone controls", "Status"}, (dialog, choice) -> {
+            .setItems(new String[]{"Enable phone controls + contacts", "Accessibility settings", "Notification access", "Set as default assistant", "Allow calls", "Pause all phone controls", "Status", "Saved drafts"}, (dialog, choice) -> {
                 if (choice == 0) {
                     prefs.edit().putBoolean("phone_enabled", true).apply();
                     if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
@@ -142,12 +142,33 @@ public final class JarvisM9Activity extends Activity {
                 }
                 if (choice == 4) requestPermissions(new String[]{android.Manifest.permission.CALL_PHONE}, 53);
                 if (choice == 5) prefs.edit().putBoolean("phone_enabled", false).apply();
+                if (choice == 7) savedDrafts();
                 if (choice == 6) new AlertDialog.Builder(this).setTitle("Phone status").setMessage(
                     "Controls: " + state + "\nContacts: " + (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED) +
                     "\nAccessibility: " + (PhoneAccessibilityService.active != null) + "\nNotifications: " + (PhoneNotificationService.active != null) +
                     "\nGrant permissions and enable Jarvis phone control once. Then use chat to request actions. Keep the device unlocked for screen actions.")
                     .setPositiveButton("Close", null).show();
             }).setNegativeButton("Close", null).show();
+    }
+
+    private void savedDrafts() {
+        java.util.ArrayList<org.json.JSONObject> saved = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, ?> entry : OpenCodeWebService.preferences(this).getAll().entrySet()) {
+            if (!entry.getKey().startsWith("phone_draft_")) continue;
+            try { saved.add(new org.json.JSONObject(String.valueOf(entry.getValue()))); } catch (Exception ignored) {}
+        }
+        saved.sort((a,b) -> Long.compare(b.optLong("at"), a.optLong("at")));
+        if (saved.isEmpty()) { new AlertDialog.Builder(this).setMessage("No saved drafts.").setPositiveButton("Close", null).show(); return; }
+        String[] labels = new String[saved.size()];
+        for (int i=0; i<saved.size(); i++) labels[i] = saved.get(i).optString("contact") + " · " + android.text.format.DateFormat.format("dd MMM HH:mm", saved.get(i).optLong("at"));
+        new AlertDialog.Builder(this).setTitle("Saved drafts").setItems(labels, (dialog, index) -> {
+            org.json.JSONObject draft = saved.get(index);
+            TextView text = new TextView(this); text.setTextIsSelectable(true); text.setPadding(20,20,20,20); text.setText(draft.optString("text"));
+            android.widget.ScrollView scroll = new android.widget.ScrollView(this); scroll.addView(text);
+            new AlertDialog.Builder(this).setTitle(draft.optString("contact")).setView(scroll)
+                .setPositiveButton("Copy", (d,w) -> getSystemService(android.content.ClipboardManager.class).setPrimaryClip(android.content.ClipData.newPlainText("Saved WhatsApp draft", draft.optString("text"))))
+                .setNegativeButton("Close", null).show();
+        }).setNegativeButton("Close", null).show();
     }
 
     private void startEngine() {

@@ -21,4 +21,25 @@ public class PhonePolicyTest {
         assertNotEquals(key,PhonePolicy.fingerprint("session:user1","+918888888888","Hi"));
         assertNotEquals(key,PhonePolicy.fingerprint("session:user1","+919999999999","Hi!"));
     }
+    @Test public void draftReplacementSendsOnlyTheRequestedTextAndPreservesTheOriginal() {
+        PhonePolicy.DraftReplacement plan=new PhonePolicy.DraftReplacement("Unfinished private draft", "Hi");
+        assertEquals("Hi",plan.outgoing);
+        assertEquals("Unfinished private draft",plan.backup);
+        assertEquals("",new PhonePolicy.DraftReplacement("Hi","Hi").backup);
+        String longDraft=new String(new char[3500]).replace('\0','x');
+        assertEquals(longDraft,new PhonePolicy.DraftReplacement(longDraft,"Hi").backup);
+    }
+    @Test public void hintsAndLongComposerTextAreHandledWithoutTruncation() {
+        assertEquals("",PhonePolicy.editorText("Message",true));
+        assertEquals("Message",PhonePolicy.editorText("Message",false));
+        String text=new String(new char[1500]).replace('\0','a');
+        assertEquals(text,PhonePolicy.editorText(text,false));
+        assertEquals(text,new PhonePolicy.DraftReplacement("",text).outgoing);
+    }
+    @Test public void sendConfirmationAcceptsHintsButRequiresANewMatchingMessage() {
+        assertTrue(PhonePolicy.submissionVisible("Hi","",2,3));
+        assertTrue(PhonePolicy.submissionVisible("Hi","Message",2,3));
+        assertFalse(PhonePolicy.submissionVisible("Hi","Hi",2,3));
+        assertFalse(PhonePolicy.submissionVisible("Hi","Message",2,2));
+    }
 }

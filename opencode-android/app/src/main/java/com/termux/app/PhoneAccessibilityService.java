@@ -82,6 +82,30 @@ public final class PhoneAccessibilityService extends AccessibilityService {
     private static String clip(CharSequence value) {
         String text=value == null ? "" : value.toString(); return text.length()>700 ? text.substring(0,700) : text;
     }
+    /** Read the full composer text; screen summaries are intentionally truncated. */
+    String editorText(String ref) throws Exception {
+        available();
+        return onMain(() -> {
+            AccessibilityNodeInfo root=getRootInActiveWindow();
+            if(root==null)throw new IllegalStateException("No active window while reading the composer");
+            String pkg=String.valueOf(root.getPackageName());int window=root.getWindowId();root.recycle();
+            AccessibilityNodeInfo node=nodes.get(ref);
+            if(SystemClock.elapsedRealtime()-snapshotAt>12000 || !pkg.equals(snapshotPackage) || node==null || node.getWindowId()!=window || !node.refresh() || !node.isEditable() || node.isPassword())
+                throw new IllegalStateException("Composer changed; no draft replaced");
+            return PhonePolicy.editorText(node.getText()==null ? "" : node.getText().toString(), node.isShowingHintText());
+        });
+    }
+    int messageCount(String expected) throws Exception {
+        return onMain(() -> {
+            int count=0;
+            for(AccessibilityNodeInfo node:nodes.values()) {
+                String id=String.valueOf(node.getViewIdResourceName());
+                String text=node.getText()==null ? "" : node.getText().toString();
+                if(id.endsWith("/message_text") && expected.equals(text))count++;
+            }
+            return count;
+        });
+    }
     JSONObject act(String ref, String operation, String text, boolean verifiedSend) throws Exception {
         available();
         return onMain(() -> {

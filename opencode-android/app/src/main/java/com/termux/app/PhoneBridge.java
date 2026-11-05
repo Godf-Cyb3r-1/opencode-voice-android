@@ -182,12 +182,6 @@ final class PhoneBridge implements AutoCloseable {
             Thread.sleep(250);
         }throw new IllegalStateException("WhatsApp chat/header could not be verified within 10 seconds; no message sent. Stop and report this failure; do not retry through generic UI tools.");
     }
-    private int countMessage(JSONObject screen,String text)throws Exception {
-        int count=0;JSONArray nodes=entries(screen);
-        for(int i=0;i<nodes.length();i++) { JSONObject node=nodes.getJSONObject(i);
-            if(node.optString("viewId").endsWith("/message_text") && text.equals(node.optString("text")))count++;
-        }return count;
-    }
     private JSONObject sendWhatsApp(JSONObject input)throws Exception {
         PhoneAccessibilityService service=access();JSONObject target=target(input);
         String text=input.getString("text");if(text.trim().isEmpty()||text.length()>2000)throw new IllegalArgumentException("Message must contain 1–2000 characters.");
@@ -200,20 +194,29 @@ final class PhoneBridge implements AutoCloseable {
         JSONObject screen=chat(service,pkg,target.getString("name"),SystemClock.elapsedRealtime()+10000);
         // The contact provider resolved one exact contact/number, the explicit number deep link
         // selected the route, and chat() verified the exact header. No contact-info detour.
-        JSONObject editor=find(screen,"entry");if(!editor.optString("text").isEmpty())throw new IllegalStateException("This chat has an existing draft. No message sent or overwritten.");
-        service.act(editor.getString("node"),"set_text",text,false);
+        JSONObject editor=find(screen,"entry");
+        PhonePolicy.DraftReplacement replacement=new PhonePolicy.DraftReplacement(service.editorText(editor.getString("node")),text);
+        String backupId="";
+        if(!replacement.backup.isEmpty()) {
+            backupId="phone_draft_"+PhonePolicy.fingerprint("draft",number,replacement.backup);
+            JSONObject saved=new JSONObject().put("contact",target.getString("name")).put("phoneNumber",number)
+                .put("text",replacement.backup).put("at",System.currentTimeMillis());
+            if(!prefs.edit().putString(backupId,saved.toString()).commit())throw new IllegalStateException("Could not save the existing draft; no text changed and no send attempted.");
+        }
+        service.act(editor.getString("node"),"set_text",replacement.outgoing,false);
         long textDeadline=SystemClock.elapsedRealtime()+3000;
         do {
             Thread.sleep(150);
             screen=chat(service,pkg,target.getString("name"),textDeadline);
             editor=find(screen,"entry");
-            if(text.equals(editor.optString("text")))break;
+            if(text.equals(service.editorText(editor.getString("node"))))break;
         } while(SystemClock.elapsedRealtime()<textDeadline);
-        if(!text.equals(editor.optString("text")))throw new IllegalStateException("WhatsApp did not accept the exact message text. No send attempted.");
-        int previousMessages=countMessage(screen,text);
+        if(!text.equals(service.editorText(editor.getString("node"))))throw new IllegalStateException("WhatsApp did not accept the exact message text. No send attempted.");
+        int previousMessages=service.messageCount(text);
         JSONObject send=find(screen,"send");if(send==null)throw new IllegalStateException("WhatsApp send control was not found. No send attempted.");
         JSONObject result=new JSONObject().put("status","send_attempt_recorded").put("contact",target.getString("name")).put("recipientVerification","number_deeplink_and_exact_contact_header").put("deliveryVerified",false)
-            .put("note","Do not automatically resend this operation.");
+            .put("draftBackedUp",!backupId.isEmpty()).put("draftBackupId",backupId)
+            .put("note","Do not automatically resend this operation. Any previous composer draft was saved privately under Phone > Saved drafts before replacement.");
         // Persist BEFORE the tap so a timeout or process death cannot cause an automatic duplicate.
         if(!prefs.edit().putString(key,result.toString()).commit())throw new IllegalStateException("Could not record send attempt; no send attempted.");
         service.act(send.getString("node"),"click","",true);
@@ -223,8 +226,8 @@ final class PhoneBridge implements AutoCloseable {
             if(!pkg.equals(after.optString("package")))break;
             JSONObject entry=find(after,"entry");
             JSONObject afterHeader=header(after);
-            if(entry!=null && afterHeader!=null && PhonePolicy.name(afterHeader.optString("text")).equals(PhonePolicy.name(target.getString("name"))) && entry.optString("text").isEmpty() && countMessage(after,text)>previousMessages) {
-                result.put("status","submitted_to_whatsapp").put("note","The resolved number deep link and exact contact header matched; WhatsApp displayed a new matching message and cleared the composer. Delivery/read status is not verified.");
+            if(entry!=null && afterHeader!=null && PhonePolicy.name(afterHeader.optString("text")).equals(PhonePolicy.name(target.getString("name"))) && PhonePolicy.submissionVisible(text,service.editorText(entry.getString("node")),previousMessages,service.messageCount(text))) {
+                result.put("status","submitted_to_whatsapp").put("note","WhatsApp displayed the requested message after Send was pressed. Delivery/read status is not verified. "+(!backupId.isEmpty()?"The previous draft is available under Phone > Saved drafts.":""));
                 prefs.edit().putString(key,result.toString()).commit();return result;
             }
         }

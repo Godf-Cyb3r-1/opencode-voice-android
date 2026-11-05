@@ -19,6 +19,22 @@ public final class PhonePolicy {
     public static boolean whatsapp(String pkg) {
         return "com.whatsapp".equals(pkg) || "com.whatsapp.w4b".equals(pkg);
     }
+    public static String editorText(String text, boolean showingHint) {
+        return showingHint || text == null ? "" : text;
+    }
+    public static final class DraftReplacement {
+        public final String outgoing;
+        public final String backup;
+        public DraftReplacement(String original, String requested) {
+            if (requested == null || requested.trim().isEmpty() || requested.length() > 2000)
+                throw new IllegalArgumentException("Message must contain 1–2000 characters.");
+            outgoing = requested;
+            backup = original == null || original.equals(requested) ? "" : original;
+        }
+    }
+    public static boolean submissionVisible(String requested, String composer, int before, int after) {
+        return after > before && !requested.equals(composer);
+    }
     public static String fingerprint(String source, String recipient, String message) {
         try {
             byte[] bytes = MessageDigest.getInstance("SHA-256").digest(

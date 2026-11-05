@@ -86,7 +86,7 @@ export const Plugin = define({
       editor.add({
         name: "send_whatsapp_message",
         options: { codemode: false },
-        description: "Send the user's exact message to a saved WhatsApp contact in ONE native operation. Resolves contacts, opens the number-specific conversation, verifies its header, enters text, presses Send once and checks the visible outcome. Use this directly for messaging; do not navigate WhatsApp with generic screen/ui tools. Stop on a failed or unknown result and report it; never work around verification or automatically resend.",
+        description: "Send the user's exact message to a saved WhatsApp contact in ONE native operation. Resolves contacts, opens the number-specific conversation, verifies its header, backs up any existing draft, enters only the requested text, presses Send once and checks the visible outcome. Use this directly for messaging; do not navigate WhatsApp with generic screen/ui tools. Stop on a failed or unknown result and report it; never work around verification or automatically resend.",
         input: Schema.Struct({ contact: Schema.String, message: Schema.String, contactId: Schema.optional(Schema.String), phoneNumber: Schema.optional(Schema.String), packageName: Schema.optional(Schema.Literals(["com.whatsapp", "com.whatsapp.w4b"])) }),
         output: Schema.String,
         execute: (input, context) => execute({ action: "whatsapp_send", contact: input.contact, text: input.message, contactId: input.contactId, phoneNumber: input.phoneNumber, packageName: input.packageName }, context),
