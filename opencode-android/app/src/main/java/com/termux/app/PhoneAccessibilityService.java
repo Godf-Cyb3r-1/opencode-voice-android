@@ -68,7 +68,7 @@ public final class PhoneAccessibilityService extends AccessibilityService {
             String ref = generation + ":" + items.length();
             Rect rect = new Rect(); node.getBoundsInScreen(rect);
             nodes.put(ref, AccessibilityNodeInfo.obtain(node));
-            items.put(new JSONObject().put("node", ref).put("text", clip(node.getText()))
+            items.put(new JSONObject().put("node", ref).put("text", node.isShowingHintText() ? "" : clip(node.getText()))
                 .put("description", clip(node.getContentDescription())).put("viewId", node.getViewIdResourceName())
                 .put("clickable", node.isClickable()).put("editable", node.isEditable())
                 .put("scrollable", node.isScrollable()).put("enabled", node.isEnabled())

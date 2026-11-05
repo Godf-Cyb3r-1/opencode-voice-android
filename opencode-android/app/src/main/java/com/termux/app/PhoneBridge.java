@@ -167,16 +167,20 @@ final class PhoneBridge implements AutoCloseable {
     private JSONObject find(JSONObject screen,String suffix)throws Exception {
         JSONArray nodes=entries(screen);for(int i=0;i<nodes.length();i++){JSONObject node=nodes.getJSONObject(i);if(node.optString("viewId").endsWith("/"+suffix))return node;}return null;
     }
+    private JSONObject header(JSONObject screen)throws Exception {
+        for(String id:new String[]{"conversation_contact_name","conversation_contact","toolbar_title"}) {
+            JSONObject node=find(screen,id);if(node!=null&&!node.optString("text").isEmpty())return node;
+        }return null;
+    }
     private JSONObject chat(PhoneAccessibilityService service,String pkg,String name,long deadline)throws Exception {
         while(SystemClock.elapsedRealtime()<deadline) {
             service.available();JSONObject screen=service.screen();
             if(pkg.equals(screen.optString("package"))) {
-                JSONObject header=find(screen,"conversation_contact_name");
-                if(header==null)header=find(screen,"conversation_contact");
+                JSONObject header=header(screen);
                 if(header!=null&&PhonePolicy.name(header.optString("text")).equals(PhonePolicy.name(name))&&find(screen,"entry")!=null)return screen;
             }
             Thread.sleep(250);
-        }throw new IllegalStateException("WhatsApp chat/header could not be verified; no message sent. Inspect the screen with phone.screen.");
+        }throw new IllegalStateException("WhatsApp chat/header could not be verified within 10 seconds; no message sent. Stop and report this failure; do not retry through generic UI tools.");
     }
     private int countMessage(JSONObject screen,String text)throws Exception {
         int count=0;JSONArray nodes=entries(screen);
@@ -193,38 +197,34 @@ final class PhoneBridge implements AutoCloseable {
         String pkg=input.optString("packageName","com.whatsapp");if(!PhonePolicy.whatsapp(pkg))throw new IllegalArgumentException("Choose WhatsApp or WhatsApp Business.");
         if(context.getPackageManager().getLaunchIntentForPackage(pkg)==null)throw new IllegalStateException("Requested WhatsApp application is not installed.");
         service.launch(new Intent(Intent.ACTION_VIEW,Uri.parse("https://wa.me/"+number.substring(1))).setPackage(pkg));
-        JSONObject screen=chat(service,pkg,target.getString("name"),SystemClock.elapsedRealtime()+16000);
-        JSONObject header=find(screen,"conversation_contact_name");if(header==null)header=find(screen,"conversation_contact");
-        service.act(header.getString("node"),"click","",false);
-        boolean verified=false;long deadline=SystemClock.elapsedRealtime()+10000;
-        while(SystemClock.elapsedRealtime()<deadline) {
-            service.available();JSONObject profile=service.screen();
-            if(!pkg.equals(profile.optString("package")))throw new IllegalStateException("WhatsApp lost focus; no message sent.");
-            JSONArray nodes=entries(profile);
-            for(int i=0;i<nodes.length();i++)if(number.equals(normalize(nodes.getJSONObject(i).optString("text"))))verified=true;
-            if(verified)break;Thread.sleep(250);
-        }
-        if(!verified)throw new IllegalStateException("Could not verify the recipient's phone number in WhatsApp contact info. No message sent.");
-        service.global("back");screen=chat(service,pkg,target.getString("name"),SystemClock.elapsedRealtime()+10000);
+        JSONObject screen=chat(service,pkg,target.getString("name"),SystemClock.elapsedRealtime()+10000);
+        // The contact provider resolved one exact contact/number, the explicit number deep link
+        // selected the route, and chat() verified the exact header. No contact-info detour.
         JSONObject editor=find(screen,"entry");if(!editor.optString("text").isEmpty())throw new IllegalStateException("This chat has an existing draft. No message sent or overwritten.");
         service.act(editor.getString("node"),"set_text",text,false);
-        screen=chat(service,pkg,target.getString("name"),SystemClock.elapsedRealtime()+5000);
-        editor=find(screen,"entry");if(!text.equals(editor.optString("text")))throw new IllegalStateException("WhatsApp did not accept the exact message text. No send attempted.");
+        long textDeadline=SystemClock.elapsedRealtime()+3000;
+        do {
+            Thread.sleep(150);
+            screen=chat(service,pkg,target.getString("name"),textDeadline);
+            editor=find(screen,"entry");
+            if(text.equals(editor.optString("text")))break;
+        } while(SystemClock.elapsedRealtime()<textDeadline);
+        if(!text.equals(editor.optString("text")))throw new IllegalStateException("WhatsApp did not accept the exact message text. No send attempted.");
         int previousMessages=countMessage(screen,text);
         JSONObject send=find(screen,"send");if(send==null)throw new IllegalStateException("WhatsApp send control was not found. No send attempted.");
-        JSONObject result=new JSONObject().put("status","send_attempt_recorded").put("contact",target.getString("name")).put("recipientVerified",true).put("deliveryVerified",false)
+        JSONObject result=new JSONObject().put("status","send_attempt_recorded").put("contact",target.getString("name")).put("recipientVerification","number_deeplink_and_exact_contact_header").put("deliveryVerified",false)
             .put("note","Do not automatically resend this operation.");
         // Persist BEFORE the tap so a timeout or process death cannot cause an automatic duplicate.
         if(!prefs.edit().putString(key,result.toString()).commit())throw new IllegalStateException("Could not record send attempt; no send attempted.");
         service.act(send.getString("node"),"click","",true);
-        deadline=SystemClock.elapsedRealtime()+7000;
+        long deadline=SystemClock.elapsedRealtime()+5000;
         while(SystemClock.elapsedRealtime()<deadline) {
             Thread.sleep(250);service.available();JSONObject after=service.screen();
             if(!pkg.equals(after.optString("package")))break;
             JSONObject entry=find(after,"entry");
-            JSONObject afterHeader=find(after,"conversation_contact_name");if(afterHeader==null)afterHeader=find(after,"conversation_contact");
+            JSONObject afterHeader=header(after);
             if(entry!=null && afterHeader!=null && PhonePolicy.name(afterHeader.optString("text")).equals(PhonePolicy.name(target.getString("name"))) && entry.optString("text").isEmpty() && countMessage(after,text)>previousMessages) {
-                result.put("status","submitted_to_whatsapp").put("note","Recipient number was verified and WhatsApp displayed a new matching message and cleared the composer. Delivery/read status is not verified.");
+                result.put("status","submitted_to_whatsapp").put("note","The resolved number deep link and exact contact header matched; WhatsApp displayed a new matching message and cleared the composer. Delivery/read status is not verified.");
                 prefs.edit().putString(key,result.toString()).commit();return result;
             }
         }
