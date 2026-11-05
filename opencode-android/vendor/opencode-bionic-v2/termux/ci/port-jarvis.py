@@ -23,6 +23,7 @@ s = s.replace(old, '''  const source = path.join(dir, "../../node_modules/@openc
     sha256: createHash("sha256").update(Buffer.from(await Bun.file(source).arrayBuffer())).digest("hex"),
   }''')
 s = s.replace('contents: `export default () => require(${JSON.stringify(parcelWatcherPackage)})`,', 'contents: `export default () => { throw new Error("Android uses filesystem watch fallback") }`,')
+s = s.replace('minify: true,', 'minify: false,')
 s = s.replace('bytecode: true,', 'bytecode: false,').replace('splitting: true,', 'splitting: false,')
 file.write_text(s)
 file = root / 'packages/cli/script/app-assets.ts'
