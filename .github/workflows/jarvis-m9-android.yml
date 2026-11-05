@@ -22,8 +22,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.4'
+      - uses: actions/cache@v4
+        id: app-cache
+        with:
+          path: jarvis-app.bin
+          key: jarvis-m9-web-b6fb280c66217dcdfabec5a0d19de58da82371e0
       - run: bun install --frozen-lockfile
+        if: steps.app-cache.outputs.cache-hit != 'true' 
       - name: Verify M9 core and build matching application
+        if: steps.app-cache.outputs.cache-hit != 'true'
         env:
           OPENCODE_VERSION: '2.2.5'
           OPENCODE_CHANNEL: latest
@@ -106,6 +113,7 @@ jobs:
           JARVIS_ANDROID_BINARY: ${{ github.workspace }}/engine-build/opencode
           TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS: '0'
         run: |
+          rm -rf app/src/main/assets/web-ui
           chmod +x gradlew
           bash scripts/build.sh
           mkdir -p ../release
