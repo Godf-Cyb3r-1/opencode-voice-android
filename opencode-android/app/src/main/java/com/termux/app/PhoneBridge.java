@@ -31,6 +31,7 @@ final class PhoneBridge implements AutoCloseable {
     private final ServerSocket server;
     private final ExecutorService clients=Executors.newFixedThreadPool(4);
     private final Object actions=new Object();
+    private final Map<String,String> targets=new HashMap<>();
     final String token;
     PhoneBridge(Context context) throws Exception {
         this.context=context.getApplicationContext(); prefs=OpenCodeWebService.preferences(context);
@@ -110,13 +111,33 @@ final class PhoneBridge implements AutoCloseable {
             }return new JSONObject().put("apps",apps);
         }
         if(action.equals("open")) {
-            String pkg=input.getString("packageName");if(PhonePolicy.protectedPackage(pkg))throw new IllegalArgumentException("System security settings must be opened by you.");
+            String pkg=input.getString("packageName");if(PhonePolicy.protectedPackage(pkg)||pkg.equals(context.getPackageName()))throw new IllegalArgumentException("Choose an external target app; system security settings must be opened by you.");
             Intent launch=context.getPackageManager().getLaunchIntentForPackage(pkg);if(launch==null)throw new IllegalArgumentException("No launchable app with that package; call apps first.");
-            access().launch(launch);return new JSONObject().put("status","opened").put("packageName",pkg);
+            launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            PhoneAccessibilityService service=access();service.launch(launch);targets.put(session(input),pkg);
+            return observed(new JSONObject().put("status","launch_requested").put("packageName",pkg),service,pkg);
         }
-        if(action.equals("screen"))return access().screen();
-        if(action.equals("ui"))return access().act(input.getString("node"),input.getString("operation"),input.optString("text"),false);
-        if(action.equals("back")||action.equals("home"))return access().global(action);
+        if(action.equals("screen")) {
+            String pkg=targetPackage(input);JSONObject screen=access().screen(pkg);
+            targets.put(session(input),screen.getString("package"));return screen;
+        }
+        if(action.equals("ui")) {
+            PhoneAccessibilityService service=access();String pkg=targetPackage(input);
+            if(PhonePolicy.shouldRestoreFocus(service.foregroundPackage(),pkg,context.getPackageName())) {
+                JSONObject screen=service.screen(pkg);
+                return new JSONObject().put("status","focus_restored_action_not_executed").put("screen",screen).put("progressKey",screen.getString("progressKey"))
+                    .put("note","The target app was restored. The previous tap was not executed; use the returned fresh node references.");
+            }
+            if(pkg!=null && !pkg.equals(service.foregroundPackage()))throw new IllegalStateException("Wrong foreground app. Read/recover the intended app before acting; no tap executed.");
+            JSONObject result=service.act(input.getString("node"),input.getString("operation"),input.optString("text"),false);
+            return observed(result,service,pkg);
+        }
+        if(action.equals("back")||action.equals("home")) {
+            PhoneAccessibilityService service=access();String pkg=targetPackage(input);
+            JSONObject result=service.global(action);
+            if(action.equals("home")){targets.remove(session(input));return result;}
+            return observed(result,service,pkg);
+        }
         if(action.equals("notifications"))return PhoneNotificationService.require().list();
         if(action.equals("notification_reply"))return PhoneNotificationService.require().reply(input.getString("replyRef"),input.getString("text"),input.getString("source"));
         if(action.equals("whatsapp_send"))return sendWhatsApp(input);
@@ -126,6 +147,24 @@ final class PhoneBridge implements AutoCloseable {
             return new JSONObject().put("status","call_requested").put("contact",target.getString("name"));
         }
         throw new IllegalArgumentException("Unknown phone action");
+    }
+    private String session(JSONObject input) {
+        String source=input.optString("source");int colon=source.indexOf(':');return colon<0?source:source.substring(0,colon);
+    }
+    private String targetPackage(JSONObject input) {
+        String supplied=input.optString("packageName");
+        if(!supplied.isEmpty())return supplied;
+        return targets.get(session(input));
+    }
+    private JSONObject observed(JSONObject result,PhoneAccessibilityService service,String pkg)throws Exception {
+        try {
+            service.settle();JSONObject screen=service.screen(pkg);
+            result.put("screen",screen).put("progressKey",screen.getString("progressKey"));
+            if(result.optString("status").equals("launch_requested"))result.put("status","opened");
+        } catch(Exception e) {
+            result.put("observationError",e.getMessage()).put("note","The action was requested, but its resulting screen was not observed. Read/recover the target screen before taking another action; do not assume it failed and repeat it.");
+        }
+        return result;
     }
     private String normalize(String number) {
         if(number==null)return "";
@@ -174,7 +213,7 @@ final class PhoneBridge implements AutoCloseable {
     }
     private JSONObject chat(PhoneAccessibilityService service,String pkg,String name,long deadline)throws Exception {
         while(SystemClock.elapsedRealtime()<deadline) {
-            service.available();JSONObject screen=service.screen();
+            service.available();JSONObject screen=service.screen(pkg);
             if(pkg.equals(screen.optString("package"))) {
                 JSONObject header=header(screen);
                 if(header!=null&&PhonePolicy.name(header.optString("text")).equals(PhonePolicy.name(name))&&find(screen,"entry")!=null)return screen;
@@ -190,7 +229,9 @@ final class PhoneBridge implements AutoCloseable {
         if(prefs.contains(key))return new JSONObject(prefs.getString(key,"{}"));
         String pkg=input.optString("packageName","com.whatsapp");if(!PhonePolicy.whatsapp(pkg))throw new IllegalArgumentException("Choose WhatsApp or WhatsApp Business.");
         if(context.getPackageManager().getLaunchIntentForPackage(pkg)==null)throw new IllegalStateException("Requested WhatsApp application is not installed.");
+        targets.put(session(input),pkg);
         service.launch(new Intent(Intent.ACTION_VIEW,Uri.parse("https://wa.me/"+number.substring(1))).setPackage(pkg));
+        service.awaitForeground(pkg);
         JSONObject screen=chat(service,pkg,target.getString("name"),SystemClock.elapsedRealtime()+10000);
         // The contact provider resolved one exact contact/number, the explicit number deep link
         // selected the route, and chat() verified the exact header. No contact-info detour.
@@ -222,7 +263,7 @@ final class PhoneBridge implements AutoCloseable {
         service.act(send.getString("node"),"click","",true);
         long deadline=SystemClock.elapsedRealtime()+5000;
         while(SystemClock.elapsedRealtime()<deadline) {
-            Thread.sleep(250);service.available();JSONObject after=service.screen();
+            Thread.sleep(250);service.available();JSONObject after=service.screen(pkg);
             if(!pkg.equals(after.optString("package")))break;
             JSONObject entry=find(after,"entry");
             JSONObject afterHeader=header(after);

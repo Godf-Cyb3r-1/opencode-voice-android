@@ -28,8 +28,12 @@ public final class PhoneAccessibilityService extends AccessibilityService {
     private long snapshotAt;
     private int generation;
     private String snapshotPackage = "";
+    private volatile long lastWindowEvent;
     @Override protected void onServiceConnected() { active = this; }
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
+    @Override public void onAccessibilityEvent(AccessibilityEvent event) {
+        if(event.getPackageName()!=null && !getPackageName().contentEquals(event.getPackageName()))
+            lastWindowEvent = SystemClock.elapsedRealtime();
+    }
     @Override public void onInterrupt() { }
     @Override public void onDestroy() { if (active == this) active = null; clear(); super.onDestroy(); }
     private void clear() { for (AccessibilityNodeInfo node : nodes.values()) node.recycle(); nodes.clear(); }
@@ -45,20 +49,62 @@ public final class PhoneAccessibilityService extends AccessibilityService {
         if (getSystemService(KeyguardManager.class).isDeviceLocked())
             throw new IllegalStateException("Unlock the phone first; Jarvis cannot bypass the lock screen.");
     }
-    JSONObject screen() throws Exception {
+    String foregroundPackage() throws Exception {
         available();
+        return onMain(() -> {
+            AccessibilityNodeInfo root=getRootInActiveWindow();
+            if(root==null)return "";
+            String pkg=String.valueOf(root.getPackageName());root.recycle();return pkg;
+        });
+    }
+    void awaitForeground(String expected) throws Exception {
+        long deadline=SystemClock.elapsedRealtime()+5000;
+        while(SystemClock.elapsedRealtime()<deadline && !expected.equals(foregroundPackage()))Thread.sleep(100);
+        if(!expected.equals(foregroundPackage()))throw new IllegalStateException("Requested app did not come to the foreground; no further action taken.");
+    }
+    void settle() throws Exception {
+        long deadline=SystemClock.elapsedRealtime()+1200;
+        Thread.sleep(180);
+        while(SystemClock.elapsedRealtime()<deadline && SystemClock.elapsedRealtime()-lastWindowEvent<180) Thread.sleep(60);
+    }
+    JSONObject screen() throws Exception { return screen(null); }
+    JSONObject screen(String expected) throws Exception {
+        available();
+        String foreground=foregroundPackage();
+        boolean restored=PhonePolicy.shouldRestoreFocus(foreground,expected,getPackageName());
+        if(restored) {
+            Intent launch=getPackageManager().getLaunchIntentForPackage(expected);
+            if(launch==null)throw new IllegalStateException("Selected app is no longer launchable");
+            launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            launch(launch);
+            long deadline=SystemClock.elapsedRealtime()+3500;
+            while(SystemClock.elapsedRealtime()<deadline && !expected.equals(foregroundPackage()))Thread.sleep(100);
+            settle();
+        }
+        final boolean focusRestored=restored;
         return onMain(() -> {
             clear();
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) throw new IllegalStateException("No accessible window; open the target app.");
             String pkg = String.valueOf(root.getPackageName());
             snapshotPackage = pkg;
+            if(pkg.equals(getPackageName())) { root.recycle(); throw new IllegalStateException("Jarvis is foreground, not the target app. Open the intended app first; do not operate on the assistant chat."); }
             if (PhonePolicy.protectedPackage(pkg)) { root.recycle(); throw new IllegalStateException("Protected system screen is not available for phone automation."); }
+            if(expected!=null && !expected.isEmpty() && !expected.equals(pkg)) { root.recycle(); throw new IllegalStateException("Target app lost focus to " + pkg + "; no action taken. Reopen " + expected + " before continuing."); }
             snapshotAt = SystemClock.elapsedRealtime(); generation++;
             JSONArray items = new JSONArray();
             collect(root, 0, items);
             root.recycle();
-            return new JSONObject().put("package", pkg).put("nodes", items).put("snapshot", generation);
+            StringBuilder state=new StringBuilder(pkg);
+            for(int i=0;i<items.length();i++) {
+                JSONObject item=items.getJSONObject(i);
+                state.append('|').append(item.optString("viewId")).append('|').append(item.optString("text"))
+                    .append('|').append(item.optString("description")).append('|').append(item.optBoolean("editable"))
+                    .append('|').append(item.optString("bounds")).append('|').append(item.optBoolean("selected"))
+                    .append('|').append(item.optBoolean("checked")).append('|').append(item.optBoolean("focused"));
+            }
+            return new JSONObject().put("package", pkg).put("nodes", items).put("snapshot", generation)
+                .put("focusRestored",focusRestored).put("progressKey",PhonePolicy.fingerprint("screen",pkg,state.toString()));
         });
     }
     private void collect(AccessibilityNodeInfo node, int depth, JSONArray items) throws Exception {
@@ -71,6 +117,7 @@ public final class PhoneAccessibilityService extends AccessibilityService {
             items.put(new JSONObject().put("node", ref).put("text", node.isShowingHintText() ? "" : clip(node.getText()))
                 .put("description", clip(node.getContentDescription())).put("viewId", node.getViewIdResourceName())
                 .put("clickable", node.isClickable()).put("editable", node.isEditable())
+                .put("selected",node.isSelected()).put("checked",node.isChecked()).put("focused",node.isFocused())
                 .put("scrollable", node.isScrollable()).put("enabled", node.isEnabled())
                 .put("bounds", new JSONArray(new int[]{rect.left, rect.top, rect.right, rect.bottom})));
         }

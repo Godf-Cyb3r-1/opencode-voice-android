@@ -41,7 +41,6 @@ export const Plugin = define({
       const messages = yield* sessions.messages({ sessionID: event.sessionID, type: "user", order: "desc", limit: 1 })
       if (!messages[0]) return
       const turn = turnFor(`${event.sessionID}:${messages[0].id}`)
-      if (turn.uiStopped) delete event.tools.phone
       if (turn.sendDone) delete event.tools.send_whatsapp_message
     }).pipe(Effect.catch(() => Effect.void)))
     const execute = (input: typeof PhoneInput.Type, context: Tool.Context) => Effect.gen(function* () {
@@ -50,7 +49,7 @@ export const Plugin = define({
         const messages = yield* sessions.messages({ sessionID: context.sessionID, type: "user", order: "desc", limit: 1 })
         const source = `${context.sessionID}:${messages[0]?.id ?? context.messageID}`
         const turn = turnFor(source)
-        if (!turn.admit(input.action)) return yield* new ToolFailure({ message: "This user turn's phone action has stopped. Do not continue tapping or retry a send. Use the dedicated send_whatsapp_message tool if no send was attempted; otherwise report the last result." })
+        if (!turn.admit(input.action, `${input.operation ?? ""}:${input.node?.split(":").at(-1) ?? ""}:${input.text ?? ""}`)) return yield* new ToolFailure({ message: "The visible screen is not changing, or a send outcome is uncertain. Do not repeat the same tap. Read the current screen, reopen the intended app, or report the actual blocker. Inspection and recovery tools remain available. Do not retry an uncertain send." })
         const output = yield* Effect.tryPromise({
           try: async (signal) => {
             const response = await fetch(`${process.env.JARVIS_ANDROID_URL}/v1/action`, {
@@ -67,17 +66,18 @@ export const Plugin = define({
             return new ToolFailure({ message: "Phone action did not return a confirmed outcome. Do not automatically retry a send or reply. Check phone status/audit.", error })
           },
         })
-        if (input.action === "whatsapp_send") {
-          const result = JSON.parse(output) as { status?: string }
-          turn.settleSend(result.status ?? "failed")
-        }
-        return { output, content: output }
+        const result = JSON.parse(output) as { status?: string; progressKey?: string; progress?: string }
+        turn.observe(result.progressKey)
+        if (turn.stalled) result.progress = "unchanged_screen: inspect or recover instead of repeating the same tap"
+        if (input.action === "whatsapp_send") turn.settleSend(result.status ?? "failed")
+        const content = JSON.stringify(result)
+        return { output: content, content }
       }).pipe(Effect.mapError((error) => error instanceof ToolFailure ? error : new ToolFailure({ message: "Native phone action failed", error })))
     yield* ctx.tool.transform((editor) => {
       editor.add({
       name: "phone",
       options: { codemode: false },
-      description: "Native Android assistant actions. status: permissions/capabilities. contacts(query): find saved names and numbers. apps: list launchable apps. open(packageName): launch app. screen: visible UI with fresh node refs. ui(node,operation,text): click, set_text, scroll_forward or scroll_backward. back/home: navigate. For all WhatsApp message sending use send_whatsapp_message directly; do not use screen/ui/open to compose a message. call(contact): make an explicitly requested phone call. notifications: list current notifications and reply refs. notification_reply(replyRef,text): reply to the exact selected notification. audit: recent action outcomes without message content. Phone permissions must be enabled once by the user. Never claim delivered based only on submission.",
+      description: "Native Android assistant actions. status: permissions/capabilities. contacts(query): find saved names and numbers. apps: list launchable apps. open(packageName): launch app. screen: target app UI with fresh node refs and progressKey. ui actions return the resulting screen, so use those fresh refs instead of an extra screen call. ui(node,operation,text): click, set_text, scroll_forward or scroll_backward. back/home: navigate. For all WhatsApp message sending use send_whatsapp_message directly; do not use screen/ui/open to compose a message. call(contact): make an explicitly requested phone call. notifications: list current notifications and reply refs. notification_reply(replyRef,text): reply to the exact selected notification. audit: recent action outcomes without message content. Phone permissions must be enabled once by the user. Never claim delivered based only on submission.",
       input: PhoneInput,
       output: Schema.String,
       execute,

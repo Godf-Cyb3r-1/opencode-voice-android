@@ -35,6 +35,9 @@ public final class PhonePolicy {
     public static boolean submissionVisible(String requested, String composer, int before, int after) {
         return after > before && !requested.equals(composer);
     }
+    public static boolean shouldRestoreFocus(String foreground, String target, String ownPackage) {
+        return ownPackage.equals(foreground) && target != null && !target.isEmpty() && !ownPackage.equals(target) && !protectedPackage(target);
+    }
     public static String fingerprint(String source, String recipient, String message) {
         try {
             byte[] bytes = MessageDigest.getInstance("SHA-256").digest(

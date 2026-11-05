@@ -33,7 +33,7 @@ jobs:
         id: app-cache
         with:
           path: jarvis-app.bin
-          key: jarvis-phone-drafts-v3-b6fb280c66217dcdfabec5a0d19de58da82371e0
+          key: jarvis-phone-progress-v4-b6fb280c66217dcdfabec5a0d19de58da82371e0
       - run: bun install --frozen-lockfile
         if: steps.app-cache.outputs.cache-hit != 'true' 
       - name: Verify M9 core and build matching application

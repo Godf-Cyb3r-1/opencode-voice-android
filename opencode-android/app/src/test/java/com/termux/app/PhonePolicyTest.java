@@ -42,4 +42,11 @@ public class PhonePolicyTest {
         assertFalse(PhonePolicy.submissionVisible("Hi","Hi",2,3));
         assertFalse(PhonePolicy.submissionVisible("Hi","Message",2,2));
     }
+    @Test public void focusRecoveryOnlyResumesTheSelectedAppFromJarvis() {
+        assertTrue(PhonePolicy.shouldRestoreFocus("com.termux","com.example.bus","com.termux"));
+        assertFalse(PhonePolicy.shouldRestoreFocus("com.other.app","com.example.bus","com.termux"));
+        assertFalse(PhonePolicy.shouldRestoreFocus("com.termux",null,"com.termux"));
+        assertFalse(PhonePolicy.shouldRestoreFocus("com.termux","com.termux","com.termux"));
+        assertFalse(PhonePolicy.shouldRestoreFocus("com.termux","com.android.settings","com.termux"));
+    }
 }
