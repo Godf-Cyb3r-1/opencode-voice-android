@@ -32,7 +32,7 @@ public class PhonePolicyTest {
     @Test public void hintsAndLongComposerTextAreHandledWithoutTruncation() {
         assertEquals("",PhonePolicy.editorText("Message",true));
         assertEquals("Message",PhonePolicy.editorText("Message",false));
-        String text=new String(new char[1500]).replace('\0','a');
+        String text=new String(new char[3500]).replace('\0','a');
         assertEquals(text,PhonePolicy.editorText(text,false));
         assertEquals(text,new PhonePolicy.DraftReplacement("",text).outgoing);
     }

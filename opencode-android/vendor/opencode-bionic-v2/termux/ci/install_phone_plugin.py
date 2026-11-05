@@ -3,9 +3,11 @@
 from pathlib import Path
 import sys
 root=Path(sys.argv[1])
+for legacy in ['android-phone-turn.ts','android-phone-turn.test.ts']:
+    (root/'packages/core/src/jarvis'/legacy).unlink(missing_ok=True)
 source=Path(sys.argv[2])
 (root/'packages/core/src/jarvis/android-phone.ts').write_text(source.read_text())
-for name in ['android-phone-instructions.ts','android-phone-turn.ts','android-phone-turn.test.ts']:
+for name in ['android-phone-instructions.ts']:
     (root/'packages/core/src/jarvis'/name).write_text(source.with_name(name).read_text())
 p=root/'packages/core/src/jarvis/prompt-guard.ts';s=p.read_text()
 s='import { PHONE_INSTRUCTIONS } from "./android-phone-instructions.js"\n'+s

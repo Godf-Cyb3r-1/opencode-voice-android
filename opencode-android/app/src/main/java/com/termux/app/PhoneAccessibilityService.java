@@ -165,8 +165,6 @@ public final class PhoneAccessibilityService extends AccessibilityService {
                 throw new IllegalStateException("Screen changed; read it again before acting.");
             String id=String.valueOf(node.getViewIdResourceName());
             String desc=PhonePolicy.name(clip(node.getContentDescription()));
-            if (!verifiedSend && PhonePolicy.whatsapp(pkg) && (id.endsWith("/send") || desc.equals("send")))
-                throw new IllegalStateException("Use whatsapp_send for recipient-verified messaging; generic send taps are disabled.");
             boolean ok;
             if ("set_text".equals(operation)) {
                 if (!node.isEditable()) throw new IllegalArgumentException("Target is not editable");

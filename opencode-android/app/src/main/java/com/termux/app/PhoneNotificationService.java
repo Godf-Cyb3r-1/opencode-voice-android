@@ -47,7 +47,7 @@ public final class PhoneNotificationService extends NotificationListenerService 
         }return new JSONObject().put("notifications",result);
     }
     synchronized JSONObject reply(String ref,String text,String source)throws Exception {
-        if(text.trim().isEmpty()||text.length()>2000)throw new IllegalArgumentException("Reply must contain 1–2000 characters.");
+        if(text.trim().isEmpty())throw new IllegalArgumentException("Reply cannot be empty.");
         Reply reply=replies.remove(ref);
         if(reply==null||SystemClock.elapsedRealtime()-reply.at>120000)throw new IllegalArgumentException("Reply reference expired or already used. Read notifications again; do not retry a previously submitted reply.");
         StatusBarNotification[] current=getActiveNotifications(new String[]{reply.key});

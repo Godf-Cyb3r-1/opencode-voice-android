@@ -223,7 +223,7 @@ final class PhoneBridge implements AutoCloseable {
     }
     private JSONObject sendWhatsApp(JSONObject input)throws Exception {
         PhoneAccessibilityService service=access();JSONObject target=target(input);
-        String text=input.getString("text");if(text.trim().isEmpty()||text.length()>2000)throw new IllegalArgumentException("Message must contain 1–2000 characters.");
+        String text=input.getString("text");if(text.trim().isEmpty())throw new IllegalArgumentException("Message cannot be empty.");
         String source=input.getString("source");String number=target.getString("phoneNumber");
         String key="phone_send_"+PhonePolicy.fingerprint(source,number,text);
         if(prefs.contains(key))return new JSONObject(prefs.getString(key,"{}"));

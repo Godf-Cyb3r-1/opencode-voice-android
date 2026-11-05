@@ -26,8 +26,8 @@ public final class PhonePolicy {
         public final String outgoing;
         public final String backup;
         public DraftReplacement(String original, String requested) {
-            if (requested == null || requested.trim().isEmpty() || requested.length() > 2000)
-                throw new IllegalArgumentException("Message must contain 1–2000 characters.");
+            if (requested == null || requested.trim().isEmpty())
+                throw new IllegalArgumentException("Message cannot be empty.");
             outgoing = requested;
             backup = original == null || original.equals(requested) ? "" : original;
         }
