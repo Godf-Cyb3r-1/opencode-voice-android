@@ -30,7 +30,7 @@ git -C "$TARGET" commit -m "opencode-bionic: config delta (versions.ts)" >/dev/n
 
 echo ""
 echo "=== step 3/3: apply source patches ==="
-bash "$CI_DIR/apply-patches.sh" "$TARGET"
+python3 "$CI_DIR/port-jarvis.py" "$TARGET"
 
 echo ""
 echo "→ build tree ready at $TARGET"

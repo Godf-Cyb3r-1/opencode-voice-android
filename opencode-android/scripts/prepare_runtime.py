@@ -44,23 +44,10 @@ def fetch(spec, dest):
 def prepare(cache):
     lock = json.loads((ROOT / 'runtime/lock.json').read_text())
     bootstrap = fetch(lock['bootstrap'], cache / 'bootstrap-aarch64.zip')
-    package = fetch(lock['runtime'], cache / 'opencode.deb')
-    binary = cache / 'opencode'
-    if not binary.exists() or sha256(binary) != lock['runtime']['binary_sha256']:
-        proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(package)], stdout=subprocess.PIPE)
-        found = False
-        with tarfile.open(fileobj=proc.stdout, mode='r|') as archive:
-            for member in archive:
-                if member.name.lstrip('./') == 'data/data/com.termux/files/usr/bin/opencode':
-                    with archive.extractfile(member) as source, binary.open('wb') as out:
-                        while block := source.read(1024 * 1024):
-                            out.write(block)
-                    found = True
-        proc.stdout.close()
-        if proc.wait() != 0 or not found:
-            raise RuntimeError('Could not extract the Android OpenCode binary')
-        if sha256(binary) != lock['runtime']['binary_sha256']:
-            raise RuntimeError('Extracted binary checksum mismatch')
+    binary = Path(os.environ['JARVIS_ANDROID_BINARY']).resolve()
+    if not binary.is_file():
+        raise RuntimeError('Build the pinned Jarvis Android binary first')
+    lock['runtime']['binary_sha256'] = sha256(binary)
     payload = ROOT / 'app/src/main/assets/engine'
     payload.mkdir(parents=True, exist_ok=True)
     with (payload / 'opencode.payload').open('wb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', mtime=0, compresslevel=6) as out, binary.open('rb') as source:

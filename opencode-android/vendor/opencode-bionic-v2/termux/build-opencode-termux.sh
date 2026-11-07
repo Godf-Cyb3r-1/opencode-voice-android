@@ -51,7 +51,7 @@ info "Running script/build.ts..."
 cd "$OPENCODE_ROOT/packages/cli"
 
 set +e
-"$BUN_BIN" run script/build.ts --target=opencode-linux-arm64 --skip-install --skip-web-ui
+OPENCODE_TARGET=linux-arm64 JARVIS_APP_ARCHIVE=/workspace/jarvis-app.bin "$BUN_BIN" run script/build.ts --skip-install --skip-web-ui
 BUILD_EXIT=$?
 set -e
 

@@ -51,7 +51,7 @@ echo "==========="
 echo "deb https://packages.termux.dev/apt/termux-main stable main" \
   > "${PREFIX:-/data/data/com.termux/files/usr}/etc/apt/sources.list"
 apt update -y
-apt install -y git python curl dpkg rust zig
+apt install -y git python curl dpkg rust zig file
 
 # Install the bun-termux version pinned in versions.json, not whatever
 # /releases/latest happens to point at — the "latest" marker drifting to a
@@ -86,6 +86,20 @@ bash /workspace/termux/ci/prepare-build-tree.sh "${FETCH_ARGS[@]}"
 
 cd "$BUILD_ROOT"
 bun install
+
+# Bun Android's ws builtin loses the namespace binding for export-star.
+# Keep the same ws public exports using named re-exports instead.
+python3 - <<'PYWS'
+from pathlib import Path
+files=list(Path('node_modules/.bun').glob('@effect+platform-node-shared@*/node_modules/@effect/platform-node-shared/dist/NodeWS.js'))
+assert files, 'Effect NodeWS adapter not found'
+for file in files:
+    text=file.read_text()
+    old='export * from "ws";'
+    assert old in text, 'Unexpected Effect NodeWS export shape'
+    file.write_text(text.replace(old,'export { WebSocket, WebSocketServer, Receiver, Sender, createWebSocketStream } from "ws";'))
+print('Patched ws re-export for the Android Bun bundler')
+PYWS
 
 # Terminal sessions ride on bun-pty, whose npm prebuilt is glibc-linked
 # (libpthread.so.0) and cannot dlopen on Bionic. Overwrite the npm artifact
@@ -131,7 +145,7 @@ PTYD_VERSION="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['ptyService']['version'])")"
 PTYD_URL="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['ptyService']['assetUrl'])")"
-PTYD_PKG="$BUILD_ROOT/node_modules/@opencode-ai/pty-linux-arm64-gnu"
+PTYD_PKG="$BUILD_ROOT/node_modules/@opencode/pty-linux-arm64-gnu"
 mkdir -p "$PTYD_PKG/bin"
 echo "→ fetching Bionic opencode-pty daemon $PTYD_VERSION"
 curl -fsSL -o "$PTYD_PKG/bin/opencode-pty" "$PTYD_URL"
@@ -151,7 +165,7 @@ then
 fi
 cat > "$PTYD_PKG/package.json" <<PKGJSON
 {
-  "name": "@opencode-ai/pty-linux-arm64-gnu",
+  "name": "@opencode/pty-linux-arm64-gnu",
   "version": "$PTYD_VERSION",
   "description": "OpenCode persistent PTY service for linux-arm64 (Bionic build)",
   "license": "MIT",
@@ -187,4 +201,39 @@ chmod 0755 /out/opencode
 sha256sum /out/opencode | tee /out/opencode.sha256
 ls -la /out/
 set +x
+echo "=== POST-BUILD: verify native Jarvis ==="
+/out/opencode --version | grep -F '2.2.5'
+mkdir -p "$HOME/jarvis-smoke"
+cd "$HOME/jarvis-smoke"
+# Activate the real phone plugin during smoke checks; no phone actions are invoked.
+export JARVIS_ANDROID_URL=http://127.0.0.1:49177
+export JARVIS_ANDROID_TOKEN=ci-not-a-device-token
+timeout 120 /out/opencode debug agents --standalone > /out/agents.json
+python3 - <<'PYVERIFY'
+import json
+agents=json.load(open('/out/agents.json'))
+j=next(a for a in agents if a['id']=='jarvis')
+assert j.get('model') is None
+assert 'JARVIS_PERSONA_VERSION_UNIVERSAL_V2' in j['system']
+assert any(p['action']=='memory_find' and p['effect']=='allow' for p in j['permissions'])
+assert any(p['action']=='phone_workflow' and p['effect']=='allow' for p in j['permissions'])
+assert any(p['action']=='android.debug.*' and p['effect']=='ask' for p in j['permissions'])
+PYVERIFY
+OPENCODE_PASSWORD=ci-smoke /out/opencode serve --hostname 127.0.0.1 --port 49176 > /out/server.log 2>&1 &
+server=$!
+trap 'kill "$server" 2>/dev/null || true' EXIT
+python3 - <<'PYHTTP'
+import urllib.request,time,base64,json
+for attempt in range(120):
+    try:
+        req=urllib.request.Request('http://127.0.0.1:49176/api/info',headers={'Authorization':'Basic '+base64.b64encode(b'opencode:ci-smoke').decode()})
+        info=json.load(urllib.request.urlopen(req,timeout=3))
+        assert info['version'].startswith('2.2.5')
+        req=urllib.request.Request('http://127.0.0.1:49176/',headers={'Authorization':'Basic '+base64.b64encode(b'opencode:ci-smoke').decode()})
+        assert b'<html' in urllib.request.urlopen(req,timeout=10).read().lower()
+        break
+    except Exception:
+        if attempt==119: raise
+        time.sleep(1)
+PYHTTP
 echo "=== POST-BUILD: done ==="

@@ -1,20 +1,20 @@
 {
   "$schema": "./versions.schema.json",
-  "opencode": "2.1.4",
+  "opencode": "2.2.5",
   "opentui": {
-    "core": "0.6.8",
-    "keymap": "0.6.8",
-    "solid": "0.6.8",
-    "react": "0.6.8",
-    "androidArm64Native": "0.6.8"
+    "core": "0.8.0",
+    "keymap": "0.8.0",
+    "solid": "0.8.0",
+    "react": "0.8.0",
+    "androidArm64Native": "0.8.0"
   },
   "bunTermux": {
     "version": "1.4.4-patched",
     "installUrl": "https://raw.githubusercontent.com/bd-loser/bun-termux/main/scripts/install.sh"
   },
   "bunPty": {
-    "version": "0.4.8",
-    "assetUrl": "https://github.com/bd-loser/bun-termux/releases/download/bun-pty-v0.4.8/librust_pty_arm64_bionic.so"
+    "version": "0.4.11",
+    "assetUrl": "https://github.com/bd-loser/bun-termux/releases/download/bun-pty-v0.4.11/librust_pty_arm64_bionic.so"
   },
   "ptyService": {
     "version": "0.2.0",

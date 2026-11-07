@@ -1,0 +1,5 @@
+<resources>
+    <string name="jarvis_phone_access_label">Jarvis phone control</string>
+    <string name="jarvis_phone_access_description">Lets Jarvis read visible app screens and perform actions you request, including sending messages. Password inputs and protected system screens are excluded. You can pause phone controls from the app at any time.</string>
+    <string name="jarvis_phone_notification_label">Jarvis notification access</string>
+</resources>
