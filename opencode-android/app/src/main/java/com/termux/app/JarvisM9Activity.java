@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
+import android.view.Gravity;
 import android.webkit.HttpAuthHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -48,6 +49,7 @@ public final class JarvisM9Activity extends Activity {
             if (isFinishing() || isDestroyed()) return;
             status.setText("Jarvis M9 · " + OpenCodeWebService.state +
                 (OpenCodeWebService.detail.isEmpty() ? "" : "\n" + OpenCodeWebService.detail));
+            status.setVisibility("ready".equals(OpenCodeWebService.state) ? View.GONE : View.VISIBLE);
             if ("ready".equals(OpenCodeWebService.state)) {
                 String origin = OpenCodeWebService.origin();
                 if (!origin.equals(loadedOrigin)) {
@@ -69,33 +71,21 @@ public final class JarvisM9Activity extends Activity {
         voicePrefs = getSharedPreferences("jarvis_voice", MODE_PRIVATE);
         voice = new Voice(this, voicePrefs, this::emit);
         getWindow().setStatusBarColor(0xff12151b);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xff12151b);
-        LinearLayout bar = new LinearLayout(this);
         status = new TextView(this);
         status.setTextColor(0xfff0a448);
         status.setText("Preparing Jarvis M9…");
-        status.setPadding(16, 8, 8, 8);
-        bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-        Button controls = new Button(this);
-        controls.setText("Engine");
-        controls.setOnClickListener(v -> controls());
-        bar.addView(controls);
-        Button phone = new Button(this);
-        phone.setText("Phone");
-        phone.setOnClickListener(v -> phoneControls());
-        bar.addView(phone);
-        Button workspace = new Button(this);
-        workspace.setText("View");
-        workspace.setOnClickListener(v -> {
-            if (loadedOrigin == null) return;
-            voice.stop();
-            String path = isHologram() ? "/" : "/hologram/index.html";
-            web.loadUrl(loadedOrigin + path + "?auth_token=" + Uri.encode(OpenCodeWebService.token(this)));
-        });
-        bar.addView(workspace);
-        root.addView(bar);
+        status.setGravity(Gravity.CENTER);
+        status.setPadding(16, 8, 16, 8);
+        Button menu = new Button(this);
+        menu.setText("⋮");
+        menu.setTextSize(22);
+        menu.setTextColor(0xfff0a448);
+        menu.setPadding(0, 0, 0, 0);
+        menu.setBackgroundColor(0x33242a31);
+        menu.setContentDescription("Jarvis menu");
+        menu.setOnClickListener(this::showMenu);
         web = new WebView(this);
         web.setBackgroundColor(0xff12151b);
         web.getSettings().setJavaScriptEnabled(true);
@@ -140,12 +130,37 @@ public final class JarvisM9Activity extends Activity {
                 return true;
             }
         });
-        root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+        int menuSize = Math.round(48 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams menuLayout = new FrameLayout.LayoutParams(menuSize, menuSize, Gravity.TOP | Gravity.END);
+        root.addView(menu, menuLayout);
         setContentView(root);
         TermuxInstaller.setupBootstrapIfNeeded(this, () -> {
             bootstrapped = true;
             startEngine();
         });
+    }
+
+    private void showMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(0, 0, 0, "Engine");
+        menu.getMenu().add(0, 1, 1, "Phone");
+        menu.getMenu().add(0, 2, 2, isHologram() ? "View OpenCode" : "View Jarvis").setEnabled(loadedOrigin != null);
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 0: controls(); return true;
+                case 1: phoneControls(); return true;
+                case 2:
+                    if (loadedOrigin == null) return true;
+                    voice.stop();
+                    String path = isHologram() ? "/" : "/hologram/index.html";
+                    web.loadUrl(loadedOrigin + path + "?auth_token=" + Uri.encode(OpenCodeWebService.token(this)));
+                    return true;
+                default: return false;
+            }
+        });
+        menu.show();
     }
 
     private void installVoiceBridge(String origin) {
