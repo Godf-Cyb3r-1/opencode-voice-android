@@ -39,7 +39,9 @@ import org.json.JSONObject;
 /** Android host for the matching M9 application served by the local M9 engine. */
 public final class JarvisM9Activity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private FrameLayout root;
     private WebView web;
+    private boolean rendererRetried;
     private Voice voice;
     private SharedPreferences voicePrefs;
     private boolean foreground;
@@ -53,18 +55,24 @@ public final class JarvisM9Activity extends Activity {
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (isFinishing() || isDestroyed()) return;
+            if (web == null) return;
             status.setText("Jarvis M9 · " + OpenCodeWebService.state +
                 (OpenCodeWebService.detail.isEmpty() ? "" : "\n" + OpenCodeWebService.detail));
             status.setVisibility("ready".equals(OpenCodeWebService.state) ? View.GONE : View.VISIBLE);
             if ("ready".equals(OpenCodeWebService.state)) {
                 String origin = OpenCodeWebService.origin();
                 if (!origin.equals(loadedOrigin)) {
-                    if (bridgeInstalled) WebViewCompat.removeWebMessageListener(web, "JarvisAndroid");
-                    loadedOrigin = origin;
-                    installVoiceBridge(origin);
-                    HashMap<String, String> headers = new HashMap<>();
-                    headers.put("Authorization", "Basic " + OpenCodeWebService.token(JarvisM9Activity.this));
-                    web.loadUrl(origin + "/hologram/index.html?auth_token=" + Uri.encode(OpenCodeWebService.token(JarvisM9Activity.this)), headers);
+                    try {
+                        if (bridgeInstalled) WebViewCompat.removeWebMessageListener(web, "JarvisAndroid");
+                        loadedOrigin = origin;
+                        installVoiceBridge(origin);
+                        HashMap<String, String> headers = new HashMap<>();
+                        headers.put("Authorization", "Basic " + OpenCodeWebService.token(JarvisM9Activity.this));
+                        web.loadUrl(origin + "/hologram/index.html?auth_token=" + Uri.encode(OpenCodeWebService.token(JarvisM9Activity.this)), headers);
+                    } catch (RuntimeException error) {
+                        showWebFailure("Jarvis could not open its interface.", error);
+                        return;
+                    }
                 }
             }
             handler.postDelayed(this, 1000);
@@ -74,9 +82,8 @@ public final class JarvisM9Activity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         voicePrefs = getSharedPreferences("jarvis_voice", MODE_PRIVATE);
-        voice = new Voice(this, voicePrefs, this::emit);
         fullscreen();
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(0xff12151b);
         status = new TextView(this);
         status.setTextColor(0xfff0a448);
@@ -87,66 +94,106 @@ public final class JarvisM9Activity extends Activity {
         menu.setContentDescription("Smart menu");
         menu.setBackgroundColor(0x44242a31);
         menu.setOnClickListener(this::smartMenu);
-        web = new WebView(this);
-        web.setBackgroundColor(0xff12151b);
-        web.getSettings().setJavaScriptEnabled(true);
-        web.getSettings().setDomStorageEnabled(true);
-        web.getSettings().setAllowFileAccess(false);
-        web.getSettings().setAllowContentAccess(false);
-        web.setWebViewClient(new WebViewClient() {
-            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                Uri uri = request.getUrl();
-                if (!"http".equals(uri.getScheme()) || !"127.0.0.1".equals(uri.getHost())
-                        || uri.getPort() != OpenCodeWebService.port || !uri.getPath().startsWith("/hologram/")) return null;
-                return hologramAsset(uri.getPath());
-            }
-            @Override public void onPageFinished(WebView view, String url) {
-                if (loadedOrigin == null || !url.startsWith(loadedOrigin + "/")) return;
-                android.content.SharedPreferences prefs = OpenCodeWebService.preferences(JarvisM9Activity.this);
-                if (prefs.getInt("jarvis_ui_revision", 0) >= 5) return;
-                prefs.edit().putInt("jarvis_ui_revision", 5).apply();
-                view.clearCache(true);
-                view.evaluateJavascript("(async()=>{if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();}if('caches' in window){for(const k of await caches.keys())await caches.delete(k);}location.reload();})().catch(()=>location.reload())", null);
-            }
-            @Override public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler auth, String host, String realm) {
-                if ("127.0.0.1".equals(host))
-                    auth.proceed("opencode", OpenCodeWebService.preferences(JarvisM9Activity.this).getString("password", ""));
-                else auth.cancel();
-            }
-            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                Uri uri = request.getUrl();
-                if ("http".equals(uri.getScheme()) && "127.0.0.1".equals(uri.getHost()) && uri.getPort() == OpenCodeWebService.port) return false;
-                if ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) {
-                    try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); } catch (Exception ignored) {}
-                }
-                return true;
-            }
-            @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
-                recreate();
-                return true;
-            }
-        });
-        web.setWebChromeClient(new WebChromeClient() {
-            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> result, FileChooserParams params) {
-                if (fileResult != null) fileResult.onReceiveValue(null);
-                fileResult = result;
-                Intent choose = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*")
-                    .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                try { startActivityForResult(choose, 41); }
-                catch (Exception error) { fileResult.onReceiveValue(null); fileResult = null; }
-                return true;
-            }
-        });
-        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         root.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
         FrameLayout.LayoutParams menuLayout = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.END);
         menuLayout.setMargins(dp(8), dp(8), dp(8), 0);
         root.addView(menu, menuLayout);
         setContentView(root);
+        createWebView();
         TermuxInstaller.setupBootstrapIfNeeded(this, () -> {
             bootstrapped = true;
             startEngine();
         });
+    }
+
+    private boolean createWebView() {
+        try {
+            web = new WebView(this);
+            web.setBackgroundColor(0xff12151b);
+            web.getSettings().setJavaScriptEnabled(true);
+            web.getSettings().setDomStorageEnabled(true);
+            web.getSettings().setAllowFileAccess(false);
+            web.getSettings().setAllowContentAccess(false);
+            web.setWebViewClient(new WebViewClient() {
+                @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                    Uri uri = request.getUrl();
+                    if (!"http".equals(uri.getScheme()) || !"127.0.0.1".equals(uri.getHost())
+                            || uri.getPort() != OpenCodeWebService.port || !uri.getPath().startsWith("/hologram/")) return null;
+                    return hologramAsset(uri.getPath());
+                }
+                @Override public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler auth, String host, String realm) {
+                    if ("127.0.0.1".equals(host))
+                        auth.proceed("opencode", OpenCodeWebService.preferences(JarvisM9Activity.this).getString("password", ""));
+                    else auth.cancel();
+                }
+                @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    Uri uri = request.getUrl();
+                    if ("http".equals(uri.getScheme()) && "127.0.0.1".equals(uri.getHost()) && uri.getPort() == OpenCodeWebService.port) return false;
+                    if ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) {
+                        try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); } catch (Exception ignored) {}
+                    }
+                    return true;
+                }
+                @Override public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                    // A terminated renderer cannot be reused. Keep the Activity and its menu alive.
+                    if (view != web) return true;
+                    handler.removeCallbacks(poll);
+                    disposeWebView();
+                    if (voice != null) voice.stop();
+                    if (!rendererRetried) {
+                        rendererRetried = true;
+                        status.setText("Restoring Jarvis interface…");
+                        status.setVisibility(View.VISIBLE);
+                        handler.post(() -> {
+                            if (!isFinishing() && !isDestroyed() && web == null && createWebView() && foreground)
+                                handler.post(poll);
+                        });
+                    } else {
+                        showWebFailure("The Android WebView stopped. Use Smart menu → Engine controls → Reload app.", null);
+                    }
+                    return true;
+                }
+            });
+            web.setWebChromeClient(new WebChromeClient() {
+                @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> result, FileChooserParams params) {
+                    if (fileResult != null) fileResult.onReceiveValue(null);
+                    fileResult = result;
+                    Intent choose = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*")
+                        .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    try { startActivityForResult(choose, 41); }
+                    catch (Exception error) { fileResult.onReceiveValue(null); fileResult = null; }
+                    return true;
+                }
+            });
+            root.addView(web, 0, new FrameLayout.LayoutParams(-1, -1));
+            return true;
+        } catch (RuntimeException | LinkageError error) {
+            showWebFailure("Jarvis could not start Android WebView. Use Smart menu → Engine controls → Reload app.", error);
+            return false;
+        }
+    }
+
+    private void disposeWebView() {
+        WebView previous = web;
+        web = null;
+        loadedOrigin = null;
+        bridgeInstalled = false;
+        if (previous != null) {
+            root.removeView(previous);
+            previous.destroy();
+        }
+    }
+
+    private void showWebFailure(String message, Throwable error) {
+        if (error != null) android.util.Log.e("JarvisM9", message, error);
+        disposeWebView();
+        status.setText(message);
+        status.setVisibility(View.VISIBLE);
+    }
+
+    private Voice voice() {
+        if (voice == null) voice = new Voice(this, voicePrefs, this::emit);
+        return voice;
     }
 
     private int dp(int value) {
@@ -208,7 +255,7 @@ public final class JarvisM9Activity extends Activity {
     }
 
     private void openView(String path) {
-        voice.stop();
+        if (voice != null) voice.stop();
         web.loadUrl(loadedOrigin + path + "?auth_token=" + Uri.encode(OpenCodeWebService.token(this)));
     }
 
@@ -236,17 +283,20 @@ public final class JarvisM9Activity extends Activity {
                     if (!foreground || editing) return;
                     switch (action) {
                         case "listen":
-                            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice.listen();
+                            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice().listen();
                             else if (!pendingMic) {
                                 pendingMic = true;
                                 requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 1);
                             }
                             break;
-                        case "cancel": pendingMic = false; voice.stop(); break;
-                        case "speak": voice.speak(data.getString("text")); break;
+                        case "cancel": pendingMic = false; if (voice != null) voice.stop(); break;
+                        case "speak": voice().speak(data.getString("text")); break;
                         case "settings": settings(); break;
                     }
-                } catch (Exception ignored) { emit("error", "Voice command failed."); }
+                } catch (Exception | LinkageError error) {
+                    android.util.Log.e("JarvisM9", "Voice command failed", error);
+                    emit("error", "Voice command failed. Check Android speech settings.");
+                }
             });
     }
 
@@ -275,7 +325,7 @@ public final class JarvisM9Activity extends Activity {
 
     private void settings() {
         editing = true;
-        voice.stop();
+        if (voice != null) voice.stop();
         emit("paused", "");
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
@@ -320,7 +370,13 @@ public final class JarvisM9Activity extends Activity {
         if (code != 1 || !pendingMic) return;
         pendingMic = false;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-            if (foreground && !editing) voice.listen();
+            if (foreground && !editing) {
+                try { voice().listen(); }
+                catch (RuntimeException | LinkageError error) {
+                    android.util.Log.e("JarvisM9", "Voice startup failed", error);
+                    emit("error", "Could not start Android speech recognition.");
+                }
+            }
         } else emit("error", "Allow microphone access in Android Settings.");
     }
 
@@ -385,7 +441,12 @@ public final class JarvisM9Activity extends Activity {
     private void controls() {
         new AlertDialog.Builder(this).setTitle("Jarvis M9")
             .setItems(new String[]{"Reload app", "Start engine", "Engine log", "Battery settings", "Stop engine"}, (d, which) -> {
-                if (which == 0) { loadedOrigin = null; handler.removeCallbacks(poll); handler.post(poll); }
+                if (which == 0) {
+                    rendererRetried = false;
+                    handler.removeCallbacks(poll);
+                    disposeWebView();
+                    if (createWebView()) handler.post(poll);
+                }
                 if (which == 1 && bootstrapped) startEngine();
                 if (which == 2) {
                     TextView log = new TextView(this);
@@ -415,7 +476,7 @@ public final class JarvisM9Activity extends Activity {
         fileResult = null;
     }
     @Override public void onBackPressed() {
-        if (web.canGoBack()) web.goBack(); else moveTaskToBack(true);
+        if (web != null && web.canGoBack()) web.goBack(); else moveTaskToBack(true);
     }
     @Override protected void onResume() {
         super.onResume();
@@ -434,15 +495,15 @@ public final class JarvisM9Activity extends Activity {
     @Override protected void onStop() {
         foreground = false;
         pendingMic = false;
-        voice.stop();
+        if (voice != null) voice.stop();
         emit("paused", "");
         super.onStop();
     }
     @Override protected void onDestroy() {
-        voice.close();
+        if (voice != null) voice.close();
         handler.removeCallbacks(poll);
         if (fileResult != null) fileResult.onReceiveValue(null);
-        web.destroy();
+        disposeWebView();
         super.onDestroy();
     }
 }
