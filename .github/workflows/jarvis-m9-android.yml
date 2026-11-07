@@ -29,24 +29,31 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.4'
+      - uses: actions/cache@v4
+        id: app-cache
+        with:
+          path: jarvis-app.bin
+          key: jarvis-hologram-b6fb-v1-${{ hashFiles('android-host/opencode-android/hologram/**', 'android-host/opencode-android/vendor/opencode-bionic-v2/termux/ci/**') }}
       - run: bun install --frozen-lockfile
+        if: steps.app-cache.outputs.cache-hit != 'true' 
       - uses: actions/setup-node@v4
+        if: steps.app-cache.outputs.cache-hit != 'true'
         with:
           node-version: '22'
-      - name: Build hologram for APK assets
+      - name: Build bundled hologram interface
         env:
           COREPACK_ENABLE_PROJECT_SPEC: '0'
-        working-directory: android-host/opencode-android/hologram
+        if: steps.app-cache.outputs.cache-hit != 'true'
         run: |
+          cd android-host/opencode-android/hologram
           corepack yarn@1.22.22 install --frozen-lockfile
           corepack yarn@1.22.22 tsc -b
           DISABLE_VISUAL_EDITS=true DISABLE_EMERGENT_OVERLAY=true corepack yarn@1.22.22 vite build --base=/hologram/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: jarvis-hologram-assets
-          path: android-host/opencode-android/hologram/dist/
-          if-no-files-found: error
+          mkdir -p ../../../packages/app/public/hologram
+          cp -a dist/. ../../../packages/app/public/hologram/
+          test -s ../../../packages/app/public/hologram/index.html
       - name: Verify M9 core and build matching application
+        if: steps.app-cache.outputs.cache-hit != 'true'
         env:
           OPENCODE_VERSION: '2.2.5'
           OPENCODE_CHANNEL: latest
@@ -99,7 +106,7 @@ jobs:
           path: opencode-android/vendor/out/*.log
           if-no-files-found: ignore
   apk:
-    needs: [app, engine]
+    needs: engine
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -110,10 +117,6 @@ jobs:
         with:
           name: jarvis-m9-android-engine
           path: engine-build
-      - uses: actions/download-artifact@v4
-        with:
-          name: jarvis-hologram-assets
-          path: opencode-android/app/src/main/assets/hologram
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -145,15 +148,6 @@ jobs:
           ./gradlew --no-daemon :app:testDebugUnitTest --tests com.termux.app.PhonePolicyTest
           mkdir -p ../release
           cp app/build/outputs/apk/debug/*universal*.apk ../release/Jarvis-M9-Android.apk || cp app/build/outputs/apk/debug/*.apk ../release/Jarvis-M9-Android.apk
-          python3 - <<'PYAPK'
-          import re, zipfile
-          with zipfile.ZipFile('../release/Jarvis-M9-Android.apk') as apk:
-              html = apk.read('assets/hologram/index.html').decode()
-              entries = re.findall(r'(?:src|href)="/hologram/([^"]+)"', html)
-              assert any(name.endswith('.js') for name in entries)
-              for name in entries:
-                  assert apk.getinfo('assets/hologram/' + name).file_size > 0
-          PYAPK
           unzip -p ../release/Jarvis-M9-Android.apk assets/engine/manifest.json > ../release/ENGINE_MANIFEST.json
           python3 - <<'PY'
           import json,os

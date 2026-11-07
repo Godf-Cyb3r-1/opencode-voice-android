@@ -106,20 +106,7 @@ public final class OpenCodeWebService extends Service {
             NotificationChannel channel = new NotificationChannel(CHANNEL, getString(R.string.oc_engine_channel), NotificationManager.IMPORTANCE_LOW);
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
-    }
-
-    private boolean enterForeground() {
-        try {
-            foreground();
-            return true;
-        } catch (RuntimeException error) {
-            android.util.Log.e("JarvisM9", "Could not promote the local engine service", error);
-            preferences(this).edit().putString("last_foreground_error", android.util.Log.getStackTraceString(error)).apply();
-            state = "error";
-            detail = "Android could not start the foreground engine: " + error.getClass().getSimpleName();
-            stopSelf();
-            return false;
-        }
+        foreground();
     }
 
     private void foreground() {
@@ -151,15 +138,16 @@ public final class OpenCodeWebService extends Service {
             preferences(this).edit().putBoolean("background_protection", !preferences(this).getBoolean("background_protection", true)).apply();
             if (worker == null || !worker.isAlive()) { releaseProtection(); stopSelf(); return START_NOT_STICKY; }
             protectBackground();
-            return enterForeground() ? START_STICKY : START_NOT_STICKY;
+            foreground();
+            return START_STICKY;
         }
         if (intent == null && !preferences(this).getBoolean("engine_wanted", true)) { stopSelf(); return START_NOT_STICKY; }
-        if (worker != null && worker.isAlive()) return enterForeground() ? START_STICKY : START_NOT_STICKY;
+        if (worker != null && worker.isAlive()) return START_STICKY;
         preferences(this).edit().putBoolean("engine_wanted", true).apply();
         stopping = false;
         state = "starting";
         detail = "";
-        if (!enterForeground()) return START_NOT_STICKY;
+        foreground();
         worker = new Thread(this::runEngine, "opencode-local-engine");
         worker.start();
         return START_STICKY;
@@ -343,7 +331,7 @@ public final class OpenCodeWebService extends Service {
         stopEngine();
         releaseProtection();
         if (worker != null) worker.interrupt();
-        if (!"error".equals(state)) state = "stopped";
+        state = "stopped";
         if (phoneBridge != null) { phoneBridge.close(); phoneBridge = null; }
         stopForeground(true);
         super.onDestroy();
