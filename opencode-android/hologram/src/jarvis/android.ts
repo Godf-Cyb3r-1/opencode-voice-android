@@ -9,6 +9,9 @@ declare global {
 }
 type VoiceEvent = { type: string; text: string };
 type Permission = { id: string; sessionID: string; action: string; resources: string[]; metadata?: { description?: string; saveDescription?: string } };
+type Conversation = { id: string | null; heard: string; transcript: string };
+type ContextMessage = { type: string; text?: string; content?: Array<{ type: string; text?: string }> };
+
 type Decision = "once" | "always" | "reject";
 
 export function nativeVoice(action: string, text?: string) {
@@ -22,6 +25,8 @@ export function useAndroidJarvis() {
   const [error, setError] = useState<string | null>(null);
   const [permission, setPermission] = useState<Permission | null>(null);
   const session = useRef<string | null>(localStorage.getItem("jarvis-hologram-session"));
+  const restored = useRef(false);
+  const restoring = useRef(false);
   const pending = useRef(false);
   const talking = useRef(false);
   const continuous = useRef(false);
@@ -39,9 +44,45 @@ export function useAndroidJarvis() {
     jarvis.hydrate({ mic: "requesting", micError: null });
     nativeVoice("listen");
   };
+  const persist = () => {
+    const { heard, transcript } = jarvis.get();
+    nativeVoice("save-conversation", JSON.stringify({
+      id: session.current, heard: heard.slice(-8000), transcript: transcript.slice(-20000),
+    } satisfies Conversation));
+  };
+
+  const restoreHistory = async (id: string) => {
+    if (pending.current || talking.current || restoring.current) return;
+    restoring.current = true;
+    try {
+      const { data } = await apiGet<{ data: ContextMessage[] }>(`/session/${encodeURIComponent(id)}/message?order=desc&limit=100`);
+      if (session.current !== id || pending.current) return;
+      const history = data.slice().reverse();
+      const user = history.findLastIndex(message => message.type === "user");
+      if (user < 0) return;
+      const latest = history.slice(user + 1).filter(message => message.type === "assistant")
+        .flatMap(message => message.content ?? []).filter(part => part.type === "text" && part.text)
+        .map(part => part.text).join("\n");
+      jarvis.hydrate({ heard: history[user]?.text ?? "", transcript: latest, streaming: false });
+      persist();
+    } catch { /* Retain the native snapshot if the engine is temporarily unavailable. */ }
+    finally { restoring.current = false; }
+  };
+
+  const newSession = () => {
+    if (pending.current || talking.current || !restored.current) return;
+    continuous.current = false;
+    nativeVoice("cancel");
+    micState(false);
+    session.current = null;
+    localStorage.removeItem("jarvis-hologram-session");
+    jarvis.hydrate({ mode: "idle", heard: "", transcript: "", streaming: false });
+    persist();
+  };
+
   const send = async (raw: string) => {
     const text = raw.trim();
-    if (!text || pending.current || statusRef.current !== "ready") return false;
+    if (!text || !restored.current || pending.current || statusRef.current !== "ready") return false;
     pending.current = true;
     talking.current = false;
     nativeVoice("cancel");
@@ -55,12 +96,14 @@ export function useAndroidJarvis() {
         session.current = result.data.id;
         localStorage.setItem("jarvis-hologram-session", result.data.id);
       }
+      persist();
       await apiPost(`/session/${encodeURIComponent(session.current)}/prompt`, { text });
       return true;
     } catch (cause) {
       if (cause && typeof cause === "object" && "status" in cause && cause.status === 404) {
         session.current = null;
         localStorage.removeItem("jarvis-hologram-session");
+        persist();
       }
       pending.current = false;
       continuous.current = false;
@@ -80,7 +123,7 @@ export function useAndroidJarvis() {
       } catch { /* SSE reconnect will retry. */ }
     };
     const source = new EventSource(androidToken ? `/api/event?auth_token=${encodeURIComponent(androidToken)}` : "/api/event");
-    source.onopen = () => { statusRef.current = "ready"; setStatus("ready"); void permissions(); };
+    source.onopen = () => { statusRef.current = "ready"; setStatus("ready"); void permissions(); if (restored.current && session.current) void restoreHistory(session.current); };
     source.onerror = () => { statusRef.current = "reconnecting"; setStatus("reconnecting"); };
     source.onmessage = (message) => {
       try {
@@ -99,6 +142,7 @@ export function useAndroidJarvis() {
           const reply = [...parts.current.values()].join("\n").trim();
           pending.current = false;
           jarvis.endUtterance(reply);
+          persist();
           if (reply && !document.hidden) {
             talking.current = true;
             jarvis.setMode("thinking");
@@ -116,6 +160,23 @@ export function useAndroidJarvis() {
     const onVoice = (event: Event) => {
       const { type, text } = (event as CustomEvent<VoiceEvent>).detail;
       switch (type) {
+        case "restore-conversation": {
+          if (restored.current) break;
+          restored.current = true;
+          try {
+            if (text) {
+              const saved = JSON.parse(text) as Conversation;
+              session.current = typeof saved.id === "string" && saved.id.startsWith("ses_") ? saved.id : null;
+              jarvis.hydrate({ heard: saved.heard || "", transcript: saved.transcript || "", streaming: false });
+            }
+          } catch { /* An old WebView session ID can still be used. */ }
+          if (session.current && statusRef.current === "ready") void restoreHistory(session.current);
+          break;
+        }
+        case "continue-conversation":
+          if (session.current && statusRef.current === "ready") void restoreHistory(session.current);
+          break;
+        case "new-conversation": newSession(); break;
         case "listening": heard.current = ""; micState(true); jarvis.listen(""); break;
         case "partial": heard.current = text; micState(true, text); jarvis.hear(text); break;
         case "level": jarvis.setInputLevel(Number(text)); break;
@@ -140,6 +201,7 @@ export function useAndroidJarvis() {
       }
     };
     window.addEventListener("jarvis-voice", onVoice);
+    nativeVoice("restore-conversation");
     return () => {
       disposed = true;
       source.close();
@@ -154,7 +216,7 @@ export function useAndroidJarvis() {
     send,
     toggleMic: () => {
       setError(null);
-      if (pending.current || statusRef.current !== "ready") return;
+      if (!restored.current || pending.current || statusRef.current !== "ready") return;
       if (continuous.current && !talking.current) {
         continuous.current = false;
         nativeVoice("cancel");
@@ -174,15 +236,6 @@ export function useAndroidJarvis() {
         try { await apiPost(`/session/${encodeURIComponent(session.current)}/interrupt`); }
         catch { setError("Could not interrupt Jarvis."); }
       } else jarvis.idle();
-    },
-    newSession: () => {
-      if (pending.current || talking.current) return;
-      continuous.current = false;
-      nativeVoice("cancel");
-      micState(false);
-      session.current = null;
-      localStorage.removeItem("jarvis-hologram-session");
-      jarvis.hydrate({ mode: "idle", heard: "", transcript: "", streaming: false });
     },
     replyPermission: async (decision: Decision) => {
       if (!permission) return;

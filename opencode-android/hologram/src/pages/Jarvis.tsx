@@ -4,7 +4,7 @@ import Composer from "@/components/Composer";
 import { useJarvis } from "@/jarvis/store";
 import { useJarvisSession } from "@/jarvis/useJarvisSession";
 
-import { nativeVoice, useAndroidJarvis } from "@/jarvis/android";
+import { useAndroidJarvis } from "@/jarvis/android";
 
 export default function Jarvis() {
   return window.JarvisAndroid ? <AndroidJarvis /> : <BrowserJarvis />;
@@ -46,10 +46,6 @@ function AndroidJarvis() {
         <span className="jarvis-brand-mark" />
         <span className="jarvis-brand-name">JARVIS</span>
         <span className="jarvis-brand-mode">{vm.mode}</span>
-      </div>
-      <div className="jarvis-native-controls">
-        <button className="cap-toggle" onClick={() => nativeVoice("settings")}>Voice settings</button>
-        <button className="cap-toggle" onClick={vm.newSession} disabled={vm.busy}>New session</button>
       </div>
       <Captions />
       <Composer {...vm} onToggleMic={vm.toggleMic} onSend={vm.send} onStop={vm.stop} />

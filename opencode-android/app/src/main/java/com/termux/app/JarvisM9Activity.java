@@ -14,6 +14,12 @@ import android.webkit.HttpAuthHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.view.Gravity;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
@@ -42,17 +48,18 @@ public final class JarvisM9Activity extends Activity {
     private TextView status;
     private String loadedOrigin;
     private boolean bootstrapped;
+    private boolean bridgeInstalled;
     private ValueCallback<Uri[]> fileResult;
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (isFinishing() || isDestroyed()) return;
             status.setText("Jarvis M9 · " + OpenCodeWebService.state +
                 (OpenCodeWebService.detail.isEmpty() ? "" : "\n" + OpenCodeWebService.detail));
+            status.setVisibility("ready".equals(OpenCodeWebService.state) ? View.GONE : View.VISIBLE);
             if ("ready".equals(OpenCodeWebService.state)) {
                 String origin = OpenCodeWebService.origin();
                 if (!origin.equals(loadedOrigin)) {
-                    if (loadedOrigin != null && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
-                        WebViewCompat.removeWebMessageListener(web, "JarvisAndroid");
+                    if (bridgeInstalled) WebViewCompat.removeWebMessageListener(web, "JarvisAndroid");
                     loadedOrigin = origin;
                     installVoiceBridge(origin);
                     HashMap<String, String> headers = new HashMap<>();
@@ -68,34 +75,18 @@ public final class JarvisM9Activity extends Activity {
         super.onCreate(saved);
         voicePrefs = getSharedPreferences("jarvis_voice", MODE_PRIVATE);
         voice = new Voice(this, voicePrefs, this::emit);
-        getWindow().setStatusBarColor(0xff12151b);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        fullscreen();
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xff12151b);
-        LinearLayout bar = new LinearLayout(this);
         status = new TextView(this);
         status.setTextColor(0xfff0a448);
-        status.setText("Preparing Jarvis M9…");
-        status.setPadding(16, 8, 8, 8);
-        bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-        Button controls = new Button(this);
-        controls.setText("Engine");
-        controls.setOnClickListener(v -> controls());
-        bar.addView(controls);
-        Button phone = new Button(this);
-        phone.setText("Phone");
-        phone.setOnClickListener(v -> phoneControls());
-        bar.addView(phone);
-        Button workspace = new Button(this);
-        workspace.setText("View");
-        workspace.setOnClickListener(v -> {
-            if (loadedOrigin == null) return;
-            voice.stop();
-            String path = isHologram() ? "/" : "/hologram/index.html";
-            web.loadUrl(loadedOrigin + path + "?auth_token=" + Uri.encode(OpenCodeWebService.token(this)));
-        });
-        bar.addView(workspace);
-        root.addView(bar);
+        status.setText("Preparing Jarvis…");
+        status.setGravity(Gravity.CENTER);
+        Button menu = new Button(this);
+        menu.setText("⋮");
+        menu.setContentDescription("Smart menu");
+        menu.setBackgroundColor(0x44242a31);
+        menu.setOnClickListener(this::smartMenu);
         web = new WebView(this);
         web.setBackgroundColor(0xff12151b);
         web.getSettings().setJavaScriptEnabled(true);
@@ -103,11 +94,17 @@ public final class JarvisM9Activity extends Activity {
         web.getSettings().setAllowFileAccess(false);
         web.getSettings().setAllowContentAccess(false);
         web.setWebViewClient(new WebViewClient() {
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if (!"http".equals(uri.getScheme()) || !"127.0.0.1".equals(uri.getHost())
+                        || uri.getPort() != OpenCodeWebService.port || !uri.getPath().startsWith("/hologram/")) return null;
+                return hologramAsset(uri.getPath());
+            }
             @Override public void onPageFinished(WebView view, String url) {
                 if (loadedOrigin == null || !url.startsWith(loadedOrigin + "/")) return;
                 android.content.SharedPreferences prefs = OpenCodeWebService.preferences(JarvisM9Activity.this);
-                if (prefs.getInt("jarvis_ui_revision", 0) >= 4) return;
-                prefs.edit().putInt("jarvis_ui_revision", 4).apply();
+                if (prefs.getInt("jarvis_ui_revision", 0) >= 5) return;
+                prefs.edit().putInt("jarvis_ui_revision", 5).apply();
                 view.clearCache(true);
                 view.evaluateJavascript("(async()=>{if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();}if('caches' in window){for(const k of await caches.keys())await caches.delete(k);}location.reload();})().catch(()=>location.reload())", null);
             }
@@ -140,7 +137,11 @@ public final class JarvisM9Activity extends Activity {
                 return true;
             }
         });
-        root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+        FrameLayout.LayoutParams menuLayout = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.END);
+        menuLayout.setMargins(dp(8), dp(8), dp(8), 0);
+        root.addView(menu, menuLayout);
         setContentView(root);
         TermuxInstaller.setupBootstrapIfNeeded(this, () -> {
             bootstrapped = true;
@@ -148,17 +149,92 @@ public final class JarvisM9Activity extends Activity {
         });
     }
 
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void fullscreen() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                controller.hide(WindowInsets.Type.systemBars());
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
+    }
+
+    private WebResourceResponse hologramAsset(String path) {
+        try {
+            if (!path.matches("/hologram/[A-Za-z0-9_./-]+") || path.contains("..")) throw new IOException();
+            String mime = java.net.URLConnection.guessContentTypeFromName(path);
+            if (path.endsWith(".html")) mime = "text/html";
+            else if (path.endsWith(".js")) mime = "application/javascript";
+            else if (path.endsWith(".css")) mime = "text/css";
+            else if (path.endsWith(".svg")) mime = "image/svg+xml";
+            else if (path.endsWith(".woff2")) mime = "font/woff2";
+            return new WebResourceResponse(mime == null ? "application/octet-stream" : mime, null,
+                    200, "OK", Collections.singletonMap("Cache-Control", "no-store"), getAssets().open(path.substring(1)));
+        } catch (IOException missing) {
+            return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", Collections.singletonMap("Cache-Control", "no-store"),
+                    new ByteArrayInputStream("Jarvis interface asset missing. Reinstall the APK update.".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        }
+    }
+
+    private void smartMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        String[] choices = {"Continue conversation", "New conversation", "Voice settings", "Phone controls", "Engine controls", "OpenCode workspace"};
+        for (int index = 0; index < choices.length; index++) menu.getMenu().add(0, index, index, choices[index]);
+        menu.getMenu().findItem(1).setEnabled(isHologram());
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 0:
+                    if (isHologram()) emit("continue-conversation", "");
+                    else if (loadedOrigin != null) openView("/hologram/index.html");
+                    break;
+                case 1:
+                    emit("new-conversation", "");
+                    break;
+                case 2: settings(); break;
+                case 3: phoneControls(); break;
+                case 4: controls(); break;
+                case 5: if (loadedOrigin != null) openView("/"); break;
+            }
+            return true;
+        });
+        menu.show();
+    }
+
+    private void openView(String path) {
+        voice.stop();
+        web.loadUrl(loadedOrigin + path + "?auth_token=" + Uri.encode(OpenCodeWebService.token(this)));
+    }
+
     private void installVoiceBridge(String origin) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             new AlertDialog.Builder(this).setMessage("Update Android System WebView to enable Jarvis voice.").setPositiveButton("Close", null).show();
             return;
         }
+        bridgeInstalled = true;
         WebViewCompat.addWebMessageListener(web, "JarvisAndroid", Collections.singleton(origin),
             (view, message, source, mainFrame, reply) -> {
-                if (!foreground || editing || !mainFrame || !origin.equals(source.toString().replaceFirst("/$", "")) || !isHologram()) return;
+                if (!mainFrame || !origin.equals(source.toString().replaceFirst("/$", "")) || !isHologram()) return;
                 try {
                     JSONObject data = new JSONObject(message.getData());
-                    switch (data.getString("action")) {
+                    String action = data.getString("action");
+                    if ("restore-conversation".equals(action)) {
+                        emit("restore-conversation", voicePrefs.getString("conversation", ""));
+                        return;
+                    }
+                    if ("save-conversation".equals(action)) {
+                        String snapshot = data.getString("text");
+                        if (snapshot.length() <= 65536) voicePrefs.edit().putString("conversation", snapshot).apply();
+                        return;
+                    }
+                    if (!foreground || editing) return;
+                    switch (action) {
                         case "listen":
                             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice.listen();
                             else if (!pendingMic) {
@@ -344,7 +420,12 @@ public final class JarvisM9Activity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         foreground = true;
+        fullscreen();
         if (bootstrapped) { handler.removeCallbacks(poll); handler.post(poll); }
+    }
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) fullscreen();
     }
     @Override protected void onPause() {
         handler.removeCallbacks(poll);
