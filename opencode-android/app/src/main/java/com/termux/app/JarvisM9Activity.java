@@ -2,6 +2,8 @@ package com.termux.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -50,6 +52,8 @@ public final class JarvisM9Activity extends Activity {
     private TextView status;
     private String loadedOrigin;
     private boolean bootstrapped;
+    private boolean engineStartPending;
+    private boolean recoveryMode;
     private boolean bridgeInstalled;
     private ValueCallback<Uri[]> fileResult;
     private final Runnable poll = new Runnable() {
@@ -99,11 +103,95 @@ public final class JarvisM9Activity extends Activity {
         menuLayout.setMargins(dp(8), dp(8), dp(8), 0);
         root.addView(menu, menuLayout);
         setContentView(root);
-        createWebView();
-        TermuxInstaller.setupBootstrapIfNeeded(this, () -> {
-            bootstrapped = true;
-            startEngine();
-        });
+        recoveryMode = offerRecovery();
+        if (recoveryMode) {
+            status.setText("Jarvis stopped unexpectedly. Open ⋮ → Crash details, or ⋮ → Engine controls → Start engine.");
+        } else prepareStartup();
+    }
+
+    private void prepareStartup() {
+        recoveryMode = false;
+        if (web == null && !createWebView()) return;
+        try {
+            TermuxInstaller.setupBootstrapIfNeeded(this, () -> {
+                if (isFinishing() || isDestroyed()) return;
+                bootstrapped = true;
+                engineStartPending = true;
+                handler.post(this::startPendingEngine);
+            });
+        } catch (RuntimeException | LinkageError error) {
+            showWebFailure("Jarvis could not prepare the local engine. See ⋮ → Crash details.", error);
+            rememberStartupError(error);
+        }
+    }
+
+    private void startPendingEngine() {
+        if (!engineStartPending || !foreground || !hasWindowFocus() || isFinishing() || isDestroyed()) return;
+        engineStartPending = false;
+        startEngine();
+    }
+
+    private ApplicationExitInfo lastExit() {
+        if (Build.VERSION.SDK_INT < 30) return null;
+        try {
+            ActivityManager manager = getSystemService(ActivityManager.class);
+            for (ApplicationExitInfo exit : manager.getHistoricalProcessExitReasons(getPackageName(), 0, 8)) {
+                if (getPackageName().equals(exit.getProcessName())) return exit;
+            }
+        } catch (RuntimeException error) {
+            android.util.Log.w("JarvisM9", "Previous exit information unavailable", error);
+        }
+        return null;
+    }
+
+    private boolean offerRecovery() {
+        if (Build.VERSION.SDK_INT < 30) return false;
+        ApplicationExitInfo exit = lastExit();
+        if (exit == null || exit.getTimestamp() <= voicePrefs.getLong("recovery_shown_at", 0)) return false;
+        int reason = exit.getReason();
+        if (reason != ApplicationExitInfo.REASON_CRASH && reason != ApplicationExitInfo.REASON_CRASH_NATIVE
+                && reason != ApplicationExitInfo.REASON_ANR) return false;
+        voicePrefs.edit().putLong("recovery_shown_at", exit.getTimestamp()).apply();
+        return true;
+    }
+
+    private void rememberStartupError(Throwable error) {
+        android.util.Log.e("JarvisM9", "Startup failed", error);
+        voicePrefs.edit().putString("last_startup_error", android.util.Log.getStackTraceString(error)).apply();
+    }
+
+    private void showCrashDetails() {
+        StringBuilder report = new StringBuilder("Android ").append(Build.VERSION.RELEASE)
+                .append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL);
+        if (Build.VERSION.SDK_INT >= 30) {
+            ApplicationExitInfo exit = lastExit();
+            if (exit != null) report.append("\n\nPrevious exit reason ").append(exit.getReason())
+                    .append(", status ").append(exit.getStatus()).append("\n")
+                    .append(exit.getDescription());
+        }
+        String startup = voicePrefs.getString("last_startup_error", "");
+        if (!startup.isEmpty()) report.append("\n\n").append(startup);
+        String service = OpenCodeWebService.preferences(this).getString("last_foreground_error", "");
+        if (!service.isEmpty()) report.append("\n\n").append(service);
+        java.io.File crash = new java.io.File(OpenCodeWebService.HOME, "crash_log.md");
+        if (!crash.isFile()) crash = new java.io.File(OpenCodeWebService.HOME, "crash_log_backup.md");
+        if (crash.isFile()) {
+            try (java.io.FileInputStream input = new java.io.FileInputStream(crash)) {
+                byte[] buffer = new byte[16384];
+                int count = input.read(buffer);
+                if (count > 0) report.append("\n\n").append(new String(buffer, 0, count, java.nio.charset.StandardCharsets.UTF_8));
+            } catch (IOException error) {
+                android.util.Log.w("JarvisM9", "Crash log unavailable", error);
+            }
+        }
+        TextView details = new TextView(this);
+        details.setText(report);
+        details.setTextIsSelectable(true);
+        details.setPadding(dp(16), dp(12), dp(16), dp(12));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(details);
+        new AlertDialog.Builder(this).setTitle("Crash details").setView(scroll)
+                .setPositiveButton("Close", null).show();
     }
 
     private boolean createWebView() {
@@ -232,7 +320,7 @@ public final class JarvisM9Activity extends Activity {
 
     private void smartMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        String[] choices = {"Continue conversation", "New conversation", "Voice settings", "Phone controls", "Engine controls", "OpenCode workspace"};
+        String[] choices = {"Continue conversation", "New conversation", "Voice settings", "Phone controls", "Engine controls", "OpenCode workspace", "Crash details"};
         for (int index = 0; index < choices.length; index++) menu.getMenu().add(0, index, index, choices[index]);
         menu.getMenu().findItem(1).setEnabled(isHologram());
         menu.setOnMenuItemClickListener(item -> {
@@ -248,6 +336,7 @@ public final class JarvisM9Activity extends Activity {
                 case 3: phoneControls(); break;
                 case 4: controls(); break;
                 case 5: if (loadedOrigin != null) openView("/"); break;
+                case 6: showCrashDetails(); break;
             }
             return true;
         });
@@ -433,21 +522,37 @@ public final class JarvisM9Activity extends Activity {
 
     private void startEngine() {
         Intent service = new Intent(this, OpenCodeWebService.class);
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
-        handler.removeCallbacks(poll);
-        handler.post(poll);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(service); else startService(service);
+            handler.removeCallbacks(poll);
+            handler.post(poll);
+        } catch (RuntimeException | LinkageError error) {
+            rememberStartupError(error);
+            status.setText("Android refused to start the engine. See ⋮ → Crash details.");
+            status.setVisibility(View.VISIBLE);
+        }
     }
 
     private void controls() {
         new AlertDialog.Builder(this).setTitle("Jarvis M9")
             .setItems(new String[]{"Reload app", "Start engine", "Engine log", "Battery settings", "Stop engine"}, (d, which) -> {
+                if (which == 0 && recoveryMode) {
+                    prepareStartup();
+                    return;
+                }
                 if (which == 0) {
                     rendererRetried = false;
                     handler.removeCallbacks(poll);
                     disposeWebView();
                     if (createWebView()) handler.post(poll);
                 }
-                if (which == 1 && bootstrapped) startEngine();
+                if (which == 1) {
+                    if (bootstrapped) {
+                        if (web == null && !createWebView()) return;
+                        engineStartPending = true;
+                        handler.post(this::startPendingEngine);
+                    } else prepareStartup();
+                }
                 if (which == 2) {
                     TextView log = new TextView(this);
                     log.setTextIsSelectable(true);
@@ -482,11 +587,15 @@ public final class JarvisM9Activity extends Activity {
         super.onResume();
         foreground = true;
         fullscreen();
-        if (bootstrapped) { handler.removeCallbacks(poll); handler.post(poll); }
+        if (engineStartPending) handler.post(this::startPendingEngine);
+        else if (bootstrapped) { handler.removeCallbacks(poll); handler.post(poll); }
     }
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
-        if (focused) fullscreen();
+        if (focused) {
+            fullscreen();
+            if (engineStartPending) handler.post(this::startPendingEngine);
+        }
     }
     @Override protected void onPause() {
         handler.removeCallbacks(poll);
