@@ -41,6 +41,8 @@ jobs:
         with:
           node-version: '22'
       - name: Build bundled hologram interface
+        env:
+          COREPACK_ENABLE_PROJECT_SPEC: '0'
         if: steps.app-cache.outputs.cache-hit != 'true'
         run: |
           cd android-host/opencode-android/hologram
@@ -49,6 +51,7 @@ jobs:
           DISABLE_VISUAL_EDITS=true DISABLE_EMERGENT_OVERLAY=true corepack yarn@1.22.22 vite build --base=/hologram/
           mkdir -p ../../../packages/app/public/hologram
           cp -a dist/. ../../../packages/app/public/hologram/
+          test -s ../../../packages/app/public/hologram/index.html
       - name: Verify M9 core and build matching application
         if: steps.app-cache.outputs.cache-hit != 'true'
         env:
