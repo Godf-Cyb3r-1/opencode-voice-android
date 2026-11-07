@@ -2,7 +2,7 @@ name: Jarvis M9 Android
 on:
   workflow_dispatch:
   push:
-    branches: [jarvis-m9-android]
+    branches: [jarvis-m9-android, jarvis-m9-hologram]
 permissions:
   contents: read
 concurrency:
@@ -33,9 +33,22 @@ jobs:
         id: app-cache
         with:
           path: jarvis-app.bin
-          key: jarvis-phone-workflows-debug-v7-b6fb280c66217dcdfabec5a0d19de58da82371e0
+          key: jarvis-hologram-b6fb-v1-${{ hashFiles('android-host/opencode-android/hologram/**', 'android-host/opencode-android/vendor/opencode-bionic-v2/termux/ci/**') }}
       - run: bun install --frozen-lockfile
         if: steps.app-cache.outputs.cache-hit != 'true' 
+      - uses: actions/setup-node@v4
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        with:
+          node-version: '22'
+      - name: Build bundled hologram interface
+        if: steps.app-cache.outputs.cache-hit != 'true'
+        run: |
+          cd android-host/opencode-android/hologram
+          corepack yarn@1.22.22 install --frozen-lockfile
+          corepack yarn@1.22.22 tsc -b
+          DISABLE_VISUAL_EDITS=true DISABLE_EMERGENT_OVERLAY=true corepack yarn@1.22.22 vite build --base=/hologram/
+          mkdir -p ../../../packages/app/public/hologram
+          cp -a dist/. ../../../packages/app/public/hologram/
       - name: Verify M9 core and build matching application
         if: steps.app-cache.outputs.cache-hit != 'true'
         env:

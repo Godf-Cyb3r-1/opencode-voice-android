@@ -20,11 +20,25 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.util.HashMap;
+import android.Manifest;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.text.InputType;
+import android.widget.*;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+import java.util.Collections;
+import org.json.JSONObject;
 
 /** Android host for the matching M9 application served by the local M9 engine. */
 public final class JarvisM9Activity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WebView web;
+    private Voice voice;
+    private SharedPreferences voicePrefs;
+    private boolean foreground;
+    private boolean editing;
+    private boolean pendingMic;
     private TextView status;
     private String loadedOrigin;
     private boolean bootstrapped;
@@ -37,10 +51,13 @@ public final class JarvisM9Activity extends Activity {
             if ("ready".equals(OpenCodeWebService.state)) {
                 String origin = OpenCodeWebService.origin();
                 if (!origin.equals(loadedOrigin)) {
+                    if (loadedOrigin != null && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
+                        WebViewCompat.removeWebMessageListener(web, "JarvisAndroid");
                     loadedOrigin = origin;
+                    installVoiceBridge(origin);
                     HashMap<String, String> headers = new HashMap<>();
                     headers.put("Authorization", "Basic " + OpenCodeWebService.token(JarvisM9Activity.this));
-                    web.loadUrl(origin + "/?auth_token=" + Uri.encode(OpenCodeWebService.token(JarvisM9Activity.this)), headers);
+                    web.loadUrl(origin + "/hologram/index.html?auth_token=" + Uri.encode(OpenCodeWebService.token(JarvisM9Activity.this)), headers);
                 }
             }
             handler.postDelayed(this, 1000);
@@ -49,6 +66,8 @@ public final class JarvisM9Activity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        voicePrefs = getSharedPreferences("jarvis_voice", MODE_PRIVATE);
+        voice = new Voice(this, voicePrefs, this::emit);
         getWindow().setStatusBarColor(0xff12151b);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -67,6 +86,15 @@ public final class JarvisM9Activity extends Activity {
         phone.setText("Phone");
         phone.setOnClickListener(v -> phoneControls());
         bar.addView(phone);
+        Button workspace = new Button(this);
+        workspace.setText("View");
+        workspace.setOnClickListener(v -> {
+            if (loadedOrigin == null) return;
+            voice.stop();
+            String path = isHologram() ? "/" : "/hologram/index.html";
+            web.loadUrl(loadedOrigin + path + "?auth_token=" + Uri.encode(OpenCodeWebService.token(this)));
+        });
+        bar.addView(workspace);
         root.addView(bar);
         web = new WebView(this);
         web.setBackgroundColor(0xff12151b);
@@ -78,8 +106,8 @@ public final class JarvisM9Activity extends Activity {
             @Override public void onPageFinished(WebView view, String url) {
                 if (loadedOrigin == null || !url.startsWith(loadedOrigin + "/")) return;
                 android.content.SharedPreferences prefs = OpenCodeWebService.preferences(JarvisM9Activity.this);
-                if (prefs.getInt("jarvis_ui_revision", 0) >= 3) return;
-                prefs.edit().putInt("jarvis_ui_revision", 3).apply();
+                if (prefs.getInt("jarvis_ui_revision", 0) >= 4) return;
+                prefs.edit().putInt("jarvis_ui_revision", 4).apply();
                 view.clearCache(true);
                 view.evaluateJavascript("(async()=>{if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister();}if('caches' in window){for(const k of await caches.keys())await caches.delete(k);}location.reload();})().catch(()=>location.reload())", null);
             }
@@ -118,6 +146,106 @@ public final class JarvisM9Activity extends Activity {
             bootstrapped = true;
             startEngine();
         });
+    }
+
+    private void installVoiceBridge(String origin) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            new AlertDialog.Builder(this).setMessage("Update Android System WebView to enable Jarvis voice.").setPositiveButton("Close", null).show();
+            return;
+        }
+        WebViewCompat.addWebMessageListener(web, "JarvisAndroid", Collections.singleton(origin),
+            (view, message, source, mainFrame, reply) -> {
+                if (!foreground || editing || !mainFrame || !origin.equals(source.toString().replaceFirst("/$", "")) || !isHologram()) return;
+                try {
+                    JSONObject data = new JSONObject(message.getData());
+                    switch (data.getString("action")) {
+                        case "listen":
+                            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice.listen();
+                            else if (!pendingMic) {
+                                pendingMic = true;
+                                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 1);
+                            }
+                            break;
+                        case "cancel": pendingMic = false; voice.stop(); break;
+                        case "speak": voice.speak(data.getString("text")); break;
+                        case "settings": settings(); break;
+                    }
+                } catch (Exception ignored) { emit("error", "Voice command failed."); }
+            });
+    }
+
+    private boolean isHologram() {
+        if (web == null || web.getUrl() == null || loadedOrigin == null) return false;
+        return web.getUrl().startsWith(loadedOrigin + "/hologram/index.html");
+    }
+
+    private void emit(String type, String text) {
+        runOnUiThread(() -> {
+            if (!isHologram()) return;
+            String payload = "{type:" + JSONObject.quote(type) + ",text:" + JSONObject.quote(text) + "}";
+            web.evaluateJavascript("window.dispatchEvent(new CustomEvent('jarvis-voice',{detail:" + payload + "}))", null);
+        });
+    }
+
+    private EditText field(LinearLayout form, String label, String key, boolean secret) {
+        EditText input = new EditText(this);
+        input.setHint(label);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | (secret ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_VARIATION_URI));
+        input.setText(voicePrefs.getString(key, ""));
+        form.addView(input);
+        return input;
+    }
+
+    private void settings() {
+        editing = true;
+        voice.stop();
+        emit("paused", "");
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(32, 12, 32, 12);
+        Spinner language = new Spinner(this);
+        language.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+            new String[]{"English (India)", "Tamil"}));
+        language.setSelection("ta-IN".equals(voicePrefs.getString("language", "en-IN")) ? 1 : 0);
+        form.addView(language);
+        CheckBox device = new CheckBox(this);
+        device.setText("On-device recognition only");
+        device.setChecked(voicePrefs.getBoolean("offline", false));
+        form.addView(device);
+        CheckBox kaggle = new CheckBox(this);
+        kaggle.setText("Use Kaggle TTS");
+        kaggle.setChecked(voicePrefs.getBoolean("kaggle", false));
+        form.addView(kaggle);
+        EditText wss = field(form, "Kaggle TTS wss://…/tts", "wss", false);
+        EditText token = field(form, "Kaggle TTS token", "token", true);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(form);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Voice settings").setView(scroll)
+            .setNegativeButton("Cancel", null).setPositiveButton("Save", null).create();
+        dialog.setOnDismissListener(d -> editing = false);
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String socket = wss.getText().toString().trim();
+            Uri endpoint = Uri.parse(socket);
+            if (kaggle.isChecked() && (!"wss".equals(endpoint.getScheme()) || endpoint.getHost() == null || endpoint.getUserInfo() != null)) {
+                wss.setError("Enter a secure WebSocket URL."); return;
+            }
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return;
+            voicePrefs.edit().putString("language", language.getSelectedItemPosition() == 1 ? "ta-IN" : "en-IN")
+                .putBoolean("offline", device.isChecked()).putBoolean("kaggle", kaggle.isChecked())
+                .putString("wss", socket).putString("token", token.getText().toString().trim()).apply();
+            dialog.dismiss();
+        }));
+        dialog.show();
+    }
+
+    @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(code, permissions, results);
+        if (code != 1 || !pendingMic) return;
+        pendingMic = false;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            if (foreground && !editing) voice.listen();
+        } else emit("error", "Allow microphone access in Android Settings.");
     }
 
     private void phoneControls() {
@@ -215,13 +343,22 @@ public final class JarvisM9Activity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume();
+        foreground = true;
         if (bootstrapped) { handler.removeCallbacks(poll); handler.post(poll); }
     }
     @Override protected void onPause() {
         handler.removeCallbacks(poll);
         super.onPause();
     }
+    @Override protected void onStop() {
+        foreground = false;
+        pendingMic = false;
+        voice.stop();
+        emit("paused", "");
+        super.onStop();
+    }
     @Override protected void onDestroy() {
+        voice.close();
         handler.removeCallbacks(poll);
         if (fileResult != null) fileResult.onReceiveValue(null);
         web.destroy();

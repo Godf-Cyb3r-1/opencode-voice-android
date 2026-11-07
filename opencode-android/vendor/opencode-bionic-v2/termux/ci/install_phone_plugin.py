@@ -45,3 +45,7 @@ s=s.replace('  Permission.node,','  Permission.node,\n  PermissionSaved.node,',1
 s=s.replace('  Permission.Service,','  Permission.Service,\n  PermissionSaved.Service,',1)
 p.write_text(s)
 assert 'AndroidPhone.Plugin' in (root/'packages/core/src/plugin/internal.ts').read_text()
+
+import runpy
+sys.argv = [str(source.with_name('patch-memory.py')), str(root)]
+runpy.run_path(sys.argv[0], run_name='__main__')
