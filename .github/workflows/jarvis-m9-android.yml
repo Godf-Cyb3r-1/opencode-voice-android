@@ -133,6 +133,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3 dpkg-dev unzip zip
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865'
+      - name: Require the existing signing key for the upgrade build
+        if: github.ref_name == 'jarvis-m9-android'
+        run: test -s opencode-android/app/local-debug.jks
       - name: Build APK with pinned native engine
         working-directory: opencode-android
         env:
@@ -171,4 +174,4 @@ jobs:
           gh release create "jarvis-m9-android-${GITHUB_RUN_ID}" release/* \
             --target "$GITHUB_SHA" --prerelease \
             --title 'Jarvis M9 Android' \
-            --notes 'Android arm64 APK with the local OpenCode 2.2.5 M9 engine and matching application interface. Approved persona, automatic memory and worker tools retained. Native engine startup and agent checks passed in Termux Docker; physical-device acceptance remains required. Voice integration is deferred.'
+            --notes 'Android ARM64 APK with the supplied Jarvis hologram, native Android STT and TTS, optional Kaggle voice gateway, and timestamped project memory. OpenCode phone controls and approval prompts are available. Physical-device speech acceptance remains required.'
