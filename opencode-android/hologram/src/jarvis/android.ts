@@ -116,11 +116,19 @@ export function useAndroidJarvis() {
     const onVoice = (event: Event) => {
       const { type, text } = (event as CustomEvent<VoiceEvent>).detail;
       switch (type) {
-        case "listening": heard.current = ""; micState(true); jarvis.listen(""); break;
+        case "listening": heard.current = text; micState(true, text); jarvis.listen(text); break;
         case "partial": heard.current = text; micState(true, text); jarvis.hear(text); break;
         case "level": jarvis.setInputLevel(Number(text)); break;
         case "decoding": jarvis.hear(heard.current); break;
-        case "final": micState(false); void send(text); break;
+        case "final":
+          micState(false);
+          if (statusRef.current === "ready") void send(text);
+          else {
+            continuous.current = false;
+            jarvis.idle();
+            setError("Connection interrupted. Your speech was not sent.");
+          }
+          break;
         case "speaking": jarvis.setMode("speaking"); break;
         case "done":
           talking.current = false;

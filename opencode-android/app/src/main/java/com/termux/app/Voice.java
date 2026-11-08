@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.speech.*;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
@@ -20,6 +22,8 @@ final class Voice implements AutoCloseable {
     private SpeechRecognizer recognizer;
     private boolean ttsReady;
     private int generation;
+    private final Handler recognitionTimers = new Handler(Looper.getMainLooper());
+    private static final int MAX_IDLE_RETRIES = 2;
 
     Voice(Activity activity, SharedPreferences prefs, BiConsumer<String, String> emit) {
         this.activity = activity;
@@ -41,7 +45,11 @@ final class Voice implements AutoCloseable {
 
     void listen() {
         stop();
-        int id = generation;
+        recognize(generation, "", 0);
+    }
+
+    private void recognize(int id, String prefix, int idleRetries) {
+        if (id != generation) return;
         boolean offline = prefs.getBoolean("offline", false);
         try {
             if (offline && (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(activity))) {
@@ -55,34 +63,59 @@ final class Voice implements AutoCloseable {
             recognizer = offline ? SpeechRecognizer.createOnDeviceSpeechRecognizer(activity) : SpeechRecognizer.createSpeechRecognizer(activity);
             recognizer.setRecognitionListener(new RecognitionListener() {
                 private boolean detectedSpeech;
-                @Override public void onReadyForSpeech(Bundle data) { if (id == generation) emit.accept("listening", ""); }
-                @Override public void onBeginningOfSpeech() { detectedSpeech = true; }
+                private int loudFrames;
+                private boolean voicedFrames;
+                private boolean completed;
+                private boolean current() { return id == generation && !completed; }
+                @Override public void onReadyForSpeech(Bundle data) {
+                    if (current()) emit.accept("listening", prefix);
+                }
+                @Override public void onBeginningOfSpeech() {
+                    if (current()) detectedSpeech = true;
+                }
                 @Override public void onRmsChanged(float rms) {
-                    if (id == generation) emit.accept("level", Float.toString(Math.max(0, Math.min(1, (rms + 2) / 12))));
+                    if (!current()) return;
+                    loudFrames = rms >= 2 ? loudFrames + 1 : 0;
+                    voicedFrames |= loudFrames >= 3;
+                    emit.accept("level", Float.toString(Math.max(0, Math.min(1, (rms + 2) / 12))));
                 }
                 @Override public void onBufferReceived(byte[] data) {}
-                @Override public void onEndOfSpeech() { if (id == generation) emit.accept("decoding", ""); }
+                @Override public void onEndOfSpeech() { if (current()) emit.accept("decoding", ""); }
                 @Override public void onEvent(int type, Bundle data) {}
                 @Override public void onPartialResults(Bundle data) {
-                    if (id != generation) return;
+                    if (!current()) return;
                     String text = hypothesis(data);
-                    if (!text.isEmpty()) { detectedSpeech = true; emit.accept("partial", text); }
+                    if (!text.isEmpty() && (detectedSpeech || voicedFrames))
+                        emit.accept("partial", join(prefix, text));
                 }
                 @Override public void onResults(Bundle data) {
-                    if (id != generation) return;
+                    if (!current()) return;
+                    completed = true;
                     String text = hypothesis(data);
                     float[] scores = data.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
-                    boolean uncertain = scores != null && scores.length > 0 && scores[0] >= 0 && scores[0] < 0.30;
+                    float confidence = scores == null || scores.length == 0 ? -1 : scores[0];
                     destroyRecognizer();
-                    if (!detectedSpeech || uncertain || text.codePoints().noneMatch(Character::isLetterOrDigit))
-                        emit.accept("retry", "I couldn’t catch that clearly. Tap the mic to try again.");
-                    else emit.accept("final", text);
+                    boolean speech = detectedSpeech || (voicedFrames && confidence >= 0.60f);
+                    if (!speech || (confidence >= 0 && confidence < 0.30f)
+                            || text.codePoints().noneMatch(Character::isLetterOrDigit)) {
+                        retryRecognition(id, prefix, idleRetries);
+                        return;
+                    }
+                    String turn = join(prefix, text);
+                    if (prefix.isEmpty() && unfinished(turn)) {
+                        // The recognizer ended a clause on a connector. Give the speaker one follow-up window.
+                        emit.accept("partial", turn);
+                        recognitionTimers.postDelayed(() -> recognize(id, turn, 0), 200);
+                    } else if (unfinished(turn)) {
+                        emit.accept("retry", "That sounded unfinished. Tap the mic and say the full thought.");
+                    } else emit.accept("final", turn);
                 }
                 @Override public void onError(int code) {
-                    if (id != generation) return;
+                    if (!current()) return;
+                    completed = true;
                     destroyRecognizer();
                     if (code == SpeechRecognizer.ERROR_NO_MATCH || code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
-                        emit.accept("retry", "I didn’t catch that. Tap the mic to try again.");
+                        retryRecognition(id, prefix, idleRetries);
                     else emit.accept("error", "Android speech recognition failed (" + code + "). Check the recognizer, language pack or network.");
                 }
             });
@@ -91,13 +124,35 @@ final class Voice implements AutoCloseable {
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE, prefs.getString("language", "en-IN"))
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1300L)
-                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 950L);
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1550L)
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1050L);
             recognizer.startListening(intent);
         } catch (RuntimeException error) {
             destroyRecognizer();
             emit.accept("error", "Could not start Android speech recognition.");
         }
+    }
+
+    private void retryRecognition(int id, String prefix, int idleRetries) {
+        if (!prefix.isEmpty()) {
+            emit.accept("retry", "I missed the rest of that thought. Tap the mic to try again.");
+            return;
+        }
+        if (idleRetries >= MAX_IDLE_RETRIES) {
+            emit.accept("retry", "I didn’t catch that clearly. Tap the mic to try again.");
+            return;
+        }
+        recognitionTimers.postDelayed(() -> recognize(id, "", idleRetries + 1), 350L * (idleRetries + 1));
+    }
+
+    private static String join(String prefix, String suffix) {
+        return prefix.isEmpty() ? suffix : prefix + " " + suffix;
+    }
+
+    static boolean unfinished(String text) {
+        String phrase = text.trim().toLowerCase(Locale.ROOT).replaceFirst("[.,…]+$", "").trim();
+        return phrase.matches("(?s).+\\s(?:and|or|but|because|then)")
+                || phrase.endsWith(" மற்றும்") || phrase.endsWith(" ஆனால்") || phrase.endsWith(" ஏனென்றால்");
     }
 
     private static String hypothesis(Bundle data) {
@@ -139,6 +194,7 @@ final class Voice implements AutoCloseable {
 
     void stop() {
         generation++;
+        recognitionTimers.removeCallbacksAndMessages(null);
         destroyRecognizer();
         kaggle.stop();
         tts.stop();
