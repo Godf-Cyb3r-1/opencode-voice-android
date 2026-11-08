@@ -1,3 +1,4 @@
+import { requestTurn } from "./turn-request";
 import { TurnController } from "./turn-controller";
 import { jarvis, useJarvis } from "./store";
 import { androidToken, apiGet, apiPost } from "@/lib/api";
@@ -108,29 +109,7 @@ export function useAndroidJarvis() {
     let disposed = false;
     controller.current = new TurnController({
       context: () => ({ assistantSpeaking: talking.current, assistantReply: jarvis.get().transcript.slice(-2000) }),
-      request: async (snapshot, signal) => {
-        const timeout = new AbortController();
-        const cancel = () => timeout.abort();
-        signal.addEventListener("abort", cancel, { once: true });
-        const timer = window.setTimeout(() => timeout.abort(), 7500);
-        try {
-          const response = await fetch("/api/experimental/generate/text", {
-            method: "POST", signal: timeout.signal,
-            headers: { "Content-Type": "application/json", ...(androidToken ? { Authorization: `Basic ${androidToken}` } : {}) },
-            body: JSON.stringify({ purpose: "jarvis-turn", model: { providerID: "opencode", id: "flint-40b-free" }, prompt: JSON.stringify(snapshot) }),
-          });
-          if (!response.ok) throw new Error(`Flint controller unavailable (${response.status}). Your speech remains pending.`);
-          const result = await response.json();
-          if (typeof result.data?.text !== "string") throw new Error("Flint returned no decision.");
-          return result.data.text;
-        } catch (error) {
-          if (timeout.signal.aborted && !signal.aborted) throw new Error("Flint took too long. Continue speaking or use text to send your request.");
-          throw error;
-        } finally {
-          window.clearTimeout(timer);
-          signal.removeEventListener("abort", cancel);
-        }
-      },
+      request: (snapshot, signal) => requestTurn(snapshot, signal, androidToken),
       decide: (action, transcript) => {
         if (disposed || !continuous.current) return;
         if (action === "LISTEN") { jarvis.hear(transcript); return; }
