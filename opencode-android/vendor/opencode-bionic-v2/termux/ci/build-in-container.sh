@@ -59,11 +59,9 @@ apt install -y git python curl dpkg rust zig file
 # (Bun 1.4.1 splitting bug, oven-sh/bun#42837).
 BUN_TERMUX_VERSION="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['bunTermux']['version'])")"
-BUN_DEB="bun_${BUN_TERMUX_VERSION}_aarch64.deb"
 BUN_TMP_DEB="$(mktemp)"
 echo "→ installing bun-termux $BUN_TERMUX_VERSION"
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$BUN_TMP_DEB" \
-  "https://github.com/bd-loser/bun-termux/releases/download/v${BUN_TERMUX_VERSION}/${BUN_DEB}?jarvis_build=$(date +%s)"
+cp /out/runtime-assets/bun.deb "$BUN_TMP_DEB"
 dpkg -i "$BUN_TMP_DEB"
 rm -f "$BUN_TMP_DEB"
 INSTALLED="$(bun --version)"
@@ -108,15 +106,13 @@ PYWS
 # require(), so this on-disk file is what the compiled binary embeds.
 BUN_PTY_VERSION="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['bunPty']['version'])")"
-BUN_PTY_URL="$(python3 -c \
-  "import json;print(json.load(open('/workspace/versions.json'))['bunPty']['assetUrl'])")"
 BUN_PTY_DIR="$(find "$BUILD_ROOT" -type d -path '*bun-pty/rust-pty/target/release' 2>/dev/null | head -1 || true)"
 if [ -z "$BUN_PTY_DIR" ]; then
   echo "error: bun-pty package not found under node_modules — cannot embed Bionic pty" >&2
   exit 1
 fi
 echo "→ embedding Bionic bun-pty $BUN_PTY_VERSION (npm prebuilt is glibc-only)"
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$BUN_PTY_DIR/librust_pty_arm64.so" "${BUN_PTY_URL}?jarvis_build=$(date +%s)"
+cp /out/runtime-assets/librust_pty_arm64.so "$BUN_PTY_DIR/librust_pty_arm64.so"
 # The container ships no usable `file`/`readelf`; verify the ELF with python.
 if ! python3 - "$BUN_PTY_DIR/librust_pty_arm64.so" <<'PYELF'
 import struct, sys
@@ -143,12 +139,10 @@ echo "→ bun-pty Bionic embedded: $BUN_PTY_DIR/librust_pty_arm64.so"
 if [ "${OPENCODE_EMBED_PTY:-1}" = "1" ]; then
 PTYD_VERSION="$(python3 -c \
   "import json;print(json.load(open('/workspace/versions.json'))['ptyService']['version'])")"
-PTYD_URL="$(python3 -c \
-  "import json;print(json.load(open('/workspace/versions.json'))['ptyService']['assetUrl'])")"
 PTYD_PKG="$BUILD_ROOT/node_modules/@opencode/pty-linux-arm64-gnu"
 mkdir -p "$PTYD_PKG/bin"
 echo "→ fetching Bionic opencode-pty daemon $PTYD_VERSION"
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$PTYD_PKG/bin/opencode-pty" "${PTYD_URL}?jarvis_build=$(date +%s)"
+cp /out/runtime-assets/opencode-pty "$PTYD_PKG/bin/opencode-pty"
 chmod 0755 "$PTYD_PKG/bin/opencode-pty"
 if ! python3 - "$PTYD_PKG/bin/opencode-pty" <<'PYELF'
 import struct, sys
@@ -237,3 +231,4 @@ for attempt in range(120):
         time.sleep(1)
 PYHTTP
 echo "=== POST-BUILD: done ==="
+

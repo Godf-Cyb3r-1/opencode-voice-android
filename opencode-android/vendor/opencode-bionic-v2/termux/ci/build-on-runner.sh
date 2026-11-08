@@ -39,6 +39,8 @@ export OPENCODE_UPSTREAM_REF='${OPENCODE_UPSTREAM_REF:-}'
 EOF
 chmod 0644 "$OUT_HOST/build-env.sh"
 
+python3 "$GITHUB_WORKSPACE/termux/ci/fetch-runtime-assets.py" "$GITHUB_WORKSPACE" "$OUT_HOST/runtime-assets"
+
 docker run --rm \
   -v "$GITHUB_WORKSPACE:/workspace" \
   -v "$OUT_HOST:/out" \
@@ -48,3 +50,4 @@ docker run --rm \
 
 # Print the path last so callers can grab it with `tail -n1`.
 echo "$OUT_HOST"
+
