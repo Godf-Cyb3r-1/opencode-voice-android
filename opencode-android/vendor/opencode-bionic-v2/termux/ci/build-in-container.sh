@@ -63,7 +63,7 @@ BUN_DEB="bun_${BUN_TERMUX_VERSION}_aarch64.deb"
 BUN_TMP_DEB="$(mktemp)"
 echo "→ installing bun-termux $BUN_TERMUX_VERSION"
 curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$BUN_TMP_DEB" \
-  "https://github.com/bd-loser/bun-termux/releases/download/v${BUN_TERMUX_VERSION}/${BUN_DEB}"
+  "https://github.com/bd-loser/bun-termux/releases/download/v${BUN_TERMUX_VERSION}/${BUN_DEB}?jarvis_build=$(date +%s)"
 dpkg -i "$BUN_TMP_DEB"
 rm -f "$BUN_TMP_DEB"
 INSTALLED="$(bun --version)"
@@ -116,7 +116,7 @@ if [ -z "$BUN_PTY_DIR" ]; then
   exit 1
 fi
 echo "→ embedding Bionic bun-pty $BUN_PTY_VERSION (npm prebuilt is glibc-only)"
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$BUN_PTY_DIR/librust_pty_arm64.so" "$BUN_PTY_URL"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$BUN_PTY_DIR/librust_pty_arm64.so" "${BUN_PTY_URL}?jarvis_build=$(date +%s)"
 # The container ships no usable `file`/`readelf`; verify the ELF with python.
 if ! python3 - "$BUN_PTY_DIR/librust_pty_arm64.so" <<'PYELF'
 import struct, sys
@@ -148,7 +148,7 @@ PTYD_URL="$(python3 -c \
 PTYD_PKG="$BUILD_ROOT/node_modules/@opencode/pty-linux-arm64-gnu"
 mkdir -p "$PTYD_PKG/bin"
 echo "→ fetching Bionic opencode-pty daemon $PTYD_VERSION"
-curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$PTYD_PKG/bin/opencode-pty" "$PTYD_URL"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 30 --max-time 120 -o "$PTYD_PKG/bin/opencode-pty" "${PTYD_URL}?jarvis_build=$(date +%s)"
 chmod 0755 "$PTYD_PKG/bin/opencode-pty"
 if ! python3 - "$PTYD_PKG/bin/opencode-pty" <<'PYELF'
 import struct, sys
