@@ -139,6 +139,8 @@ jobs:
         if: github.ref_name == 'jarvis-m9-android'
         run: test -s opencode-android/app/local-debug.jks
       - name: Fetch local streaming speech model
+        env:
+          GH_TOKEN: ${{ github.token }}
         working-directory: opencode-android
         run: bash scripts/prepare_streaming_stt.sh
       - name: Build APK with pinned native engine
