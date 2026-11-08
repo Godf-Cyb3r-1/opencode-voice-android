@@ -25,6 +25,10 @@ export function useAndroidJarvis() {
   const pending = useRef(false);
   const talking = useRef(false);
   const continuous = useRef(false);
+  const duplex = useRef(false);
+  const voiceInProgress = useRef(false);
+  const queued = useRef("");
+  const deferredReply = useRef("");
   const heard = useRef("");
   const parts = useRef(new Map<string, string>());
 
@@ -44,8 +48,10 @@ export function useAndroidJarvis() {
     if (!text || pending.current || statusRef.current !== "ready") return false;
     pending.current = true;
     talking.current = false;
-    nativeVoice("cancel");
-    micState(false);
+    if (!duplex.current) {
+      nativeVoice("cancel");
+      micState(false);
+    }
     parts.current.clear();
     setError(null);
     jarvis.hydrate({ mode: "thinking", heard: text, transcript: "", utteranceId: jarvis.get().utteranceId + 1, streaming: false });
@@ -63,10 +69,34 @@ export function useAndroidJarvis() {
         localStorage.removeItem("jarvis-hologram-session");
       }
       pending.current = false;
-      continuous.current = false;
+      if (!duplex.current) continuous.current = false;
       setError(cause instanceof Error ? cause.message : "Jarvis request failed");
       jarvis.idle();
       return false;
+    }
+  };
+
+  const speakReply = (reply: string) => {
+    if (!reply || document.hidden) { jarvis.idle(); return; }
+    talking.current = true;
+    jarvis.setMode("thinking");
+    nativeVoice("speak", reply);
+  };
+
+  const sendVoice = (text: string) => {
+    deferredReply.current = "";
+    if (statusRef.current !== "ready") {
+      setError("Connection interrupted. Your speech was not sent.");
+      if (!pending.current) jarvis.idle();
+      return;
+    }
+    if (!pending.current) { void send(text); return; }
+    const first = !queued.current;
+    queued.current = [queued.current, text].filter(Boolean).join(" ");
+    if (first && session.current) {
+      void apiPost(`/session/${encodeURIComponent(session.current)}/interrupt`).catch(() => {
+        setError("Waiting for the previous reply to finish before sending your correction.");
+      });
     }
   };
 
@@ -95,28 +125,60 @@ export function useAndroidJarvis() {
           parts.current.set(key, text);
           jarvis.hydrate({ transcript: [...parts.current.values()].join("\n"), streaming: true });
         }
-        if (event.type === "session.execution.succeeded") {
-          const reply = [...parts.current.values()].join("\n").trim();
+        if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(event.type)) {
           pending.current = false;
-          jarvis.endUtterance(reply);
-          if (reply && !document.hidden) {
-            talking.current = true;
-            jarvis.setMode("thinking");
-            nativeVoice("speak", reply);
-          } else jarvis.idle();
-        }
-        if (["session.execution.failed", "session.execution.interrupted"].includes(event.type)) {
-          pending.current = false;
-          continuous.current = false;
-          jarvis.hydrate({ mode: "idle", streaming: false });
-          if (event.type === "session.execution.failed") setError(data.error?.message ?? "Jarvis execution failed.");
+          if (queued.current) {
+            const next = queued.current;
+            queued.current = "";
+            if (statusRef.current === "ready") void send(next);
+            else {
+              jarvis.idle();
+              setError("Connection interrupted. Your correction was not sent.");
+            }
+            return;
+          }
+          if (event.type === "session.execution.succeeded") {
+            const reply = [...parts.current.values()].join("\n").trim();
+            jarvis.endUtterance(reply);
+            if (duplex.current && voiceInProgress.current) deferredReply.current = reply;
+            else speakReply(reply);
+          } else {
+            if (!duplex.current) continuous.current = false;
+            jarvis.hydrate({ mode: "idle", streaming: false });
+            if (event.type === "session.execution.failed") setError(data.error?.message ?? "Jarvis execution failed.");
+          }
         }
       } catch { /* Ignore malformed events. */ }
     };
     const onVoice = (event: Event) => {
       const { type, text } = (event as CustomEvent<VoiceEvent>).detail;
       switch (type) {
-        case "listening": heard.current = text; micState(true, text); jarvis.listen(text); break;
+        case "duplex-listening": {
+          if (!duplex.current) setError(null);
+          duplex.current = true;
+          voiceInProgress.current = false;
+          micState(true);
+          if (deferredReply.current) {
+            const reply = deferredReply.current;
+            deferredReply.current = "";
+            speakReply(reply);
+          } else if (!pending.current && !talking.current) jarvis.listen("");
+          break;
+        }
+        case "duplex-partial":
+          voiceInProgress.current = true;
+          micState(true, text);
+          if (!pending.current && !talking.current) jarvis.hear(text);
+          break;
+        case "duplex-final":
+          voiceInProgress.current = false;
+          sendVoice(text);
+          break;
+        case "barge":
+          talking.current = false;
+          jarvis.listen("");
+          break;
+        case "listening": duplex.current = false; heard.current = text; micState(true, text); jarvis.listen(text); break;
         case "partial": heard.current = text; micState(true, text); jarvis.hear(text); break;
         case "level": jarvis.setInputLevel(Number(text)); break;
         case "decoding": jarvis.hear(heard.current); break;
@@ -133,7 +195,8 @@ export function useAndroidJarvis() {
         case "done":
           talking.current = false;
           jarvis.idle();
-          if (continuous.current && !document.hidden) listen();
+          if (duplex.current && continuous.current) jarvis.listen("");
+          else if (continuous.current && !document.hidden) listen();
           break;
         case "notice": setError(text); break;
         case "paused":
@@ -141,6 +204,11 @@ export function useAndroidJarvis() {
         case "error":
           talking.current = false;
           continuous.current = false;
+          duplex.current = false;
+          voiceInProgress.current = false;
+          deferredReply.current = "";
+          queued.current = "";
+          nativeVoice("cancel");
           micState(false);
           if (!pending.current) jarvis.idle();
           if (type !== "paused") setError(text);
@@ -162,12 +230,17 @@ export function useAndroidJarvis() {
     send,
     toggleMic: () => {
       setError(null);
-      if (pending.current || statusRef.current !== "ready") return;
-      if (continuous.current && !talking.current) {
+      if (statusRef.current !== "ready") return;
+      if (continuous.current && (duplex.current || !talking.current)) {
         continuous.current = false;
+        duplex.current = false;
+        talking.current = false;
+        voiceInProgress.current = false;
+        deferredReply.current = "";
+        queued.current = "";
         nativeVoice("cancel");
         micState(false);
-        jarvis.idle();
+        if (!pending.current) jarvis.idle();
       } else {
         continuous.current = true;
         listen();
@@ -176,6 +249,10 @@ export function useAndroidJarvis() {
     stop: async () => {
       continuous.current = false;
       talking.current = false;
+      duplex.current = false;
+      voiceInProgress.current = false;
+      deferredReply.current = "";
+      queued.current = "";
       nativeVoice("cancel");
       micState(false);
       if (pending.current && session.current) {
@@ -186,6 +263,10 @@ export function useAndroidJarvis() {
     newSession: () => {
       if (pending.current || talking.current) return;
       continuous.current = false;
+      duplex.current = false;
+      voiceInProgress.current = false;
+      deferredReply.current = "";
+      queued.current = "";
       nativeVoice("cancel");
       micState(false);
       session.current = null;

@@ -136,6 +136,9 @@ jobs:
       - name: Require the existing signing key for the upgrade build
         if: github.ref_name == 'jarvis-m9-android'
         run: test -s opencode-android/app/local-debug.jks
+      - name: Fetch local streaming speech model
+        working-directory: opencode-android
+        run: bash scripts/prepare_streaming_stt.sh
       - name: Build APK with pinned native engine
         working-directory: opencode-android
         env:
@@ -156,6 +159,12 @@ jobs:
           assert manifest['commit']==os.environ['JARVIS_SHA']
           assert manifest['version']=='2.2.5'
           PY
+          unzip -Z -1 ../release/Jarvis-M9-Android.apk > ../apk-files.txt
+          model=sherpa-onnx-streaming-zipformer-en-2023-06-26
+          for file in encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx tokens.txt; do
+            grep -Fx "assets/$model/$file" ../apk-files.txt
+          done
+          grep -Fx 'lib/arm64-v8a/libsherpa-onnx-jni.so' ../apk-files.txt
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify ../release/Jarvis-M9-Android.apk
           printf '%s\n' "$JARVIS_SHA" > ../release/JARVIS_COMMIT_SHA
           printf '%s\n' "$GITHUB_SHA" > ../release/ANDROID_COMMIT_SHA

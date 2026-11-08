@@ -224,8 +224,12 @@ public final class JarvisM9Activity extends Activity {
             new String[]{"English (India)", "Tamil"}));
         language.setSelection("ta-IN".equals(voicePrefs.getString("language", "en-IN")) ? 1 : 0);
         form.addView(language);
+        CheckBox conversation = new CheckBox(this);
+        conversation.setText("Live conversation (English, on device)");
+        conversation.setChecked(voicePrefs.getBoolean("conversation", true));
+        form.addView(conversation);
         CheckBox device = new CheckBox(this);
-        device.setText("On-device recognition only");
+        device.setText("Android recognition fallback: on-device only");
         device.setChecked(voicePrefs.getBoolean("offline", false));
         form.addView(device);
         CheckBox kaggle = new CheckBox(this);
@@ -247,7 +251,7 @@ public final class JarvisM9Activity extends Activity {
             }
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return;
             voicePrefs.edit().putString("language", language.getSelectedItemPosition() == 1 ? "ta-IN" : "en-IN")
-                .putBoolean("offline", device.isChecked()).putBoolean("kaggle", kaggle.isChecked())
+                .putBoolean("conversation", conversation.isChecked()).putBoolean("offline", device.isChecked()).putBoolean("kaggle", kaggle.isChecked())
                 .putString("wss", socket).putString("token", token.getText().toString().trim()).apply();
             dialog.dismiss();
         }));

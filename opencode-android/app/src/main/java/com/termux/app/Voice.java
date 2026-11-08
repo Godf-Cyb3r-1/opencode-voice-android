@@ -20,6 +20,11 @@ final class Voice implements AutoCloseable {
     private final TextToSpeech tts;
     private final KaggleVoice kaggle = new KaggleVoice();
     private SpeechRecognizer recognizer;
+    private final JarvisStreamingStt streaming;
+    private boolean playing;
+    private boolean overlap;
+    private String spoken = "";
+    private long playbackEnded;
     private boolean ttsReady;
     private int generation;
     private final Handler recognitionTimers = new Handler(Looper.getMainLooper());
@@ -29,6 +34,21 @@ final class Voice implements AutoCloseable {
         this.activity = activity;
         this.prefs = prefs;
         this.emit = emit;
+        streaming = new JarvisStreamingStt(activity, new JarvisStreamingStt.Events() {
+            @Override public void onState(String state) {
+                if ("listening".equals(state)) {
+                    overlap = false;
+                    emit.accept("duplex-listening", "");
+                } else if ("no-echo-cancellation".equals(state)) {
+                    emit.accept("notice", "This device could not enable echo cancellation. Listening resumes after playback.");
+                }
+            }
+            @Override public void onPartial(String text) { acceptStream(text, false); }
+            @Override public void onFinal(String text) { acceptStream(text, true); }
+            @Override public void onFailure(String reason) {
+                streamingFallback();
+            }
+        });
         tts = new TextToSpeech(activity, result -> ttsReady = result == TextToSpeech.SUCCESS);
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
             @Override public void onStart(String id) { publish(id, "speaking", ""); }
@@ -39,13 +59,60 @@ final class Voice implements AutoCloseable {
 
     private void publish(String id, String type, String text) {
         activity.runOnUiThread(() -> {
-            if (id.equals(Integer.toString(generation))) emit.accept(type, text);
+            if (!id.equals(Integer.toString(generation))) return;
+            if ("done".equals(type) || "error".equals(type)) finishPlayback();
+            emit.accept(type, text);
         });
     }
 
     void listen() {
         stop();
+        if (prefs.getBoolean("conversation", true) && "en-IN".equals(prefs.getString("language", "en-IN"))) {
+            emit.accept("notice", "Starting local conversation mode…");
+            streaming.start();
+        } else recognize(generation, "", 0);
+    }
+
+    private void streamingFallback() {
+        stop();
+        emit.accept("notice", "Local conversation mode unavailable. Using Android turn-based recognition.");
         recognize(generation, "", 0);
+    }
+
+    private void acceptStream(String text, boolean complete) {
+        String words = normalize(text);
+        if (words.isEmpty()) return;
+        overlap |= playing || android.os.SystemClock.elapsedRealtime() - playbackEnded < 350;
+        if (overlap && (isAcknowledgment(words) || (" " + spoken + " ").contains(" " + words + " "))) return;
+        boolean interruptionCue = words.matches("^(wait|hold on|stop|actually|no wait)( .*)?$");
+        if (overlap && !interruptionCue && (!complete || !words.contains(" "))) return;
+        if (overlap && playing) {
+            stopPlayback();
+            emit.accept("barge", "");
+        }
+        if (complete && overlap && words.matches("wait|hold on|stop")) return;
+        emit.accept(complete ? "duplex-final" : "duplex-partial", text);
+    }
+
+    private static String normalize(String text) {
+        return text.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", " ").trim();
+    }
+
+    private static boolean isAcknowledgment(String words) {
+        return words.matches("mm+|mhm|uh huh|yeah|yep|okay|ok|right|i see|got it");
+    }
+
+    private void finishPlayback() {
+        if (playing) playbackEnded = android.os.SystemClock.elapsedRealtime();
+        playing = false;
+        streaming.playback(false);
+    }
+
+    private void stopPlayback() {
+        ++generation;
+        finishPlayback();
+        kaggle.stop();
+        tts.stop();
     }
 
     private void recognize(int id, String prefix, int idleRetries) {
@@ -161,14 +228,18 @@ final class Voice implements AutoCloseable {
     }
 
     void speak(String text) {
-        stop();
+        if (streaming.active()) stopPlayback();
+        else stop();
+        spoken = normalize(text.replaceAll("\\[[a-zA-Z][a-zA-Z-]{1,32}\\]", ""));
+        playing = true;
+        streaming.playback(true);
         String id = Integer.toString(generation);
         if (!prefs.getBoolean("kaggle", false)) { local(id, text); return; }
         kaggle.speak(prefs.getString("wss", ""), prefs.getString("token", ""), text,
             () -> publish(id, "speaking", ""), () -> publish(id, "done", ""), started ->
                 activity.runOnUiThread(() -> {
                     if (!id.equals(Integer.toString(generation))) return;
-                    if (started) emit.accept("error", "Kaggle playback stopped before the reply finished.");
+                    if (started) publish(id, "error", "Kaggle playback stopped before the reply finished.");
                     else {
                         emit.accept("notice", "Kaggle TTS unavailable. Using Android voice.");
                         local(id, text);
@@ -193,11 +264,11 @@ final class Voice implements AutoCloseable {
     }
 
     void stop() {
-        generation++;
         recognitionTimers.removeCallbacksAndMessages(null);
+        stopPlayback();
         destroyRecognizer();
-        kaggle.stop();
-        tts.stop();
+        streaming.stop();
+        overlap = false;
     }
-    @Override public void close() { stop(); kaggle.close(); tts.shutdown(); }
+    @Override public void close() { stop(); streaming.close(); kaggle.close(); tts.shutdown(); }
 }
