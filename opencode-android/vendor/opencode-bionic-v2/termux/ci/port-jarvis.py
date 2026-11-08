@@ -37,3 +37,5 @@ print('Applied Android adapters; Jarvis persona, memory and controller code reta
 # Install native phone tools without changing the approved persona text.
 import subprocess
 subprocess.run(["python3", str(Path(__file__).resolve().parent / "install_phone_plugin.py"), str(root), str(Path(__file__).resolve().parent / "android-phone.ts")], check=True)
+
+subprocess.run(["python3", str(Path(__file__).resolve().parent / "patch-conversation.py"), str(root)], check=True)

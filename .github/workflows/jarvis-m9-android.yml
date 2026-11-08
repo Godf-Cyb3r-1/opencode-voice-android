@@ -25,6 +25,7 @@ jobs:
       - name: Apply Android composer selection fix
         run: |
           python3 android-host/opencode-android/scripts/patch_m9_ui.py .
+          python3 android-host/opencode-android/vendor/opencode-bionic-v2/termux/ci/patch-conversation.py .
           python3 android-host/opencode-android/scripts/install_phone_plugin.py . android-host/opencode-android/vendor/opencode-bionic-v2/termux/ci/android-phone.ts
       - uses: oven-sh/setup-bun@v2
         with:

@@ -29,7 +29,6 @@ final class Voice implements AutoCloseable {
     private boolean ttsReady;
     private int generation;
     private final Handler recognitionTimers = new Handler(Looper.getMainLooper());
-    private static final int MAX_IDLE_RETRIES = 2;
 
     Voice(Activity activity, SharedPreferences prefs, BiConsumer<String, String> emit) {
         this.activity = activity;
@@ -153,7 +152,7 @@ final class Voice implements AutoCloseable {
                     if (current()) emit.accept("listening", prefix);
                 }
                 @Override public void onBeginningOfSpeech() {
-                    if (current()) detectedSpeech = true;
+                    if (current()) { detectedSpeech = true; emit.accept("speech-start", ""); }
                 }
                 @Override public void onRmsChanged(float rms) {
                     if (!current()) return;
@@ -188,14 +187,9 @@ final class Voice implements AutoCloseable {
                         retryRecognition(id, prefix, idleRetries);
                         return;
                     }
-                    String turn = join(prefix, text);
-                    if (prefix.isEmpty() && unfinished(turn)) {
-                        // The recognizer ended a clause on a connector. Give the speaker one follow-up window.
-                        emit.accept("partial", turn);
-                        recognitionTimers.postDelayed(() -> recognize(id, turn, 0), 200);
-                    } else if (unfinished(turn)) {
-                        emit.accept("retry", "That sounded unfinished. Tap the mic and say the full thought.");
-                    } else emit.accept("final", turn);
+                    emit.accept("final", text);
+                    recognitionTimers.postDelayed(() -> recognize(id, "", 0), 180);
+
                 }
                 @Override public void onError(int code) {
                     if (!current()) return;
@@ -225,15 +219,8 @@ final class Voice implements AutoCloseable {
     }
 
     private void retryRecognition(int id, String prefix, int idleRetries) {
-        if (!prefix.isEmpty()) {
-            emit.accept("retry", "I missed the rest of that thought. Tap the mic to try again.");
-            return;
-        }
-        if (idleRetries >= MAX_IDLE_RETRIES) {
-            emit.accept("retry", "I didn’t catch that clearly. Tap the mic to try again.");
-            return;
-        }
-        recognitionTimers.postDelayed(() -> recognize(id, "", idleRetries + 1), 350L * (idleRetries + 1));
+        // An empty recognition segment is not a completed conversational turn.
+        recognitionTimers.postDelayed(() -> recognize(id, "", 0), 700);
     }
 
     private static String join(String prefix, String suffix) {

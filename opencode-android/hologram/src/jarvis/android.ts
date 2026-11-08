@@ -1,3 +1,4 @@
+import { TurnController } from "./turn-controller";
 import { jarvis, useJarvis } from "./store";
 import { androidToken, apiGet, apiPost } from "@/lib/api";
 import { useEffect, useRef, useState } from "react";
@@ -30,6 +31,7 @@ export function useAndroidJarvis() {
   const queued = useRef("");
   const deferredReply = useRef("");
   const heard = useRef("");
+  const controller = useRef<TurnController | null>(null);
   const parts = useRef(new Map<string, string>());
 
   const micState = (listening: boolean, partial = "") => {
@@ -48,7 +50,8 @@ export function useAndroidJarvis() {
     if (!text || pending.current || statusRef.current !== "ready") return false;
     pending.current = true;
     talking.current = false;
-    if (!duplex.current) {
+    if (!continuous.current) {
+      controller.current?.reset();
       nativeVoice("cancel");
       micState(false);
     }
@@ -103,6 +106,50 @@ export function useAndroidJarvis() {
   useEffect(() => {
     micState(false);
     let disposed = false;
+    controller.current = new TurnController({
+      context: () => ({ assistantSpeaking: talking.current, assistantReply: jarvis.get().transcript.slice(-2000) }),
+      request: async (snapshot, signal) => {
+        const timeout = new AbortController();
+        const cancel = () => timeout.abort();
+        signal.addEventListener("abort", cancel, { once: true });
+        const timer = window.setTimeout(() => timeout.abort(), 7500);
+        try {
+          const response = await fetch("/api/experimental/generate/text", {
+            method: "POST", signal: timeout.signal,
+            headers: { "Content-Type": "application/json", ...(androidToken ? { Authorization: `Basic ${androidToken}` } : {}) },
+            body: JSON.stringify({ purpose: "jarvis-turn", model: { providerID: "opencode", id: "flint-40b-free" }, prompt: JSON.stringify(snapshot) }),
+          });
+          if (!response.ok) throw new Error(`Flint controller unavailable (${response.status}). Your speech remains pending.`);
+          const result = await response.json();
+          if (typeof result.data?.text !== "string") throw new Error("Flint returned no decision.");
+          return result.data.text;
+        } catch (error) {
+          if (timeout.signal.aborted && !signal.aborted) throw new Error("Flint took too long. Continue speaking or use text to send your request.");
+          throw error;
+        } finally {
+          window.clearTimeout(timer);
+          signal.removeEventListener("abort", cancel);
+        }
+      },
+      decide: (action, transcript) => {
+        if (disposed || !continuous.current) return;
+        if (action === "LISTEN") { jarvis.hear(transcript); return; }
+        voiceInProgress.current = false;
+        if (action === "RESPOND") {
+          setError(null);
+          sendVoice(transcript);
+        } else if (action === "YIELD") {
+          talking.current = false;
+          deferredReply.current = "";
+          nativeVoice("listen");
+        } else if (deferredReply.current) {
+          const reply = deferredReply.current;
+          deferredReply.current = "";
+          speakReply(reply);
+        }
+      },
+      error: message => { if (!disposed) setError(message); },
+    });
     const permissions = async () => {
       try {
         const { data } = await apiGet<{ data: Permission[] }>("/permission/request");
@@ -140,7 +187,7 @@ export function useAndroidJarvis() {
           if (event.type === "session.execution.succeeded") {
             const reply = [...parts.current.values()].join("\n").trim();
             jarvis.endUtterance(reply);
-            if (duplex.current && voiceInProgress.current) deferredReply.current = reply;
+            if (continuous.current && voiceInProgress.current) deferredReply.current = reply;
             else speakReply(reply);
           } else {
             if (!duplex.current) continuous.current = false;
@@ -156,40 +203,43 @@ export function useAndroidJarvis() {
         case "duplex-listening": {
           if (!duplex.current) setError(null);
           duplex.current = true;
-          voiceInProgress.current = false;
           micState(true);
-          if (deferredReply.current) {
-            const reply = deferredReply.current;
-            deferredReply.current = "";
-            speakReply(reply);
-          } else if (!pending.current && !talking.current) jarvis.listen("");
+          if (!pending.current && !talking.current) jarvis.listen("");
           break;
         }
         case "duplex-partial":
+          controller.current?.update(text, false);
           voiceInProgress.current = true;
           micState(true, text);
           if (!pending.current && !talking.current) jarvis.hear(text);
           break;
         case "duplex-final":
-          voiceInProgress.current = false;
-          sendVoice(text);
+          voiceInProgress.current = true;
+          controller.current?.update(text, true);
           break;
         case "barge":
           talking.current = false;
           jarvis.listen("");
           break;
-        case "listening": duplex.current = false; heard.current = text; micState(true, text); jarvis.listen(text); break;
-        case "partial": heard.current = text; micState(true, text); jarvis.hear(text); break;
+        case "speech-start":
+          controller.current?.speechStarted();
+          voiceInProgress.current = true;
+          break;
+        case "listening":
+          duplex.current = false;
+          micState(true, heard.current);
+          if (!pending.current && !talking.current) jarvis.listen(heard.current);
+          break;
+        case "partial":
+          voiceInProgress.current = true;
+          controller.current?.update(text, false);
+          heard.current = text; micState(true, text); jarvis.hear(text);
+          break;
         case "level": jarvis.setInputLevel(Number(text)); break;
         case "decoding": jarvis.hear(heard.current); break;
         case "final":
-          micState(false);
-          if (statusRef.current === "ready") void send(text);
-          else {
-            continuous.current = false;
-            jarvis.idle();
-            setError("Connection interrupted. Your speech was not sent.");
-          }
+          voiceInProgress.current = true;
+          controller.current?.update(text, true);
           break;
         case "speaking": jarvis.setMode("speaking"); break;
         case "done":
@@ -208,6 +258,7 @@ export function useAndroidJarvis() {
           voiceInProgress.current = false;
           deferredReply.current = "";
           queued.current = "";
+          controller.current?.reset();
           nativeVoice("cancel");
           micState(false);
           if (!pending.current) jarvis.idle();
@@ -220,6 +271,7 @@ export function useAndroidJarvis() {
       disposed = true;
       source.close();
       window.removeEventListener("jarvis-voice", onVoice);
+      controller.current?.reset();
       nativeVoice("cancel");
     };
   }, []);
@@ -238,6 +290,7 @@ export function useAndroidJarvis() {
         voiceInProgress.current = false;
         deferredReply.current = "";
         queued.current = "";
+        controller.current?.reset();
         nativeVoice("cancel");
         micState(false);
         if (!pending.current) jarvis.idle();
@@ -253,6 +306,7 @@ export function useAndroidJarvis() {
       voiceInProgress.current = false;
       deferredReply.current = "";
       queued.current = "";
+      controller.current?.reset();
       nativeVoice("cancel");
       micState(false);
       if (pending.current && session.current) {
@@ -267,6 +321,7 @@ export function useAndroidJarvis() {
       voiceInProgress.current = false;
       deferredReply.current = "";
       queued.current = "";
+      controller.current?.reset();
       nativeVoice("cancel");
       micState(false);
       session.current = null;
