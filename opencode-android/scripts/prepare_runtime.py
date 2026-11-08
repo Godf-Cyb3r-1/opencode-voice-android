@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
+import urllib.parse
 import zipfile
 import gzip
 
@@ -30,9 +31,22 @@ def fetch(spec, dest):
     temporary = dest.with_suffix('.partial')
     req = urllib.request.Request(spec['url'], headers={'User-Agent': 'OpenCode-Android-build/0.1'})
     try:
-        with urllib.request.urlopen(req, timeout=60) as response, temporary.open('wb') as out:
-            while block := response.read(1024 * 1024):
-                out.write(block)
+        url = urllib.parse.urlparse(spec['url'])
+        parts = url.path.strip('/').split('/')
+        if os.environ.get('GH_TOKEN') and url.hostname == 'github.com' and len(parts) == 6 and parts[2:4] == ['releases', 'download']:
+            owner, repo, _, _, tag, name = map(urllib.parse.unquote, parts)
+            release = json.loads(subprocess.check_output([
+                'gh', 'api', f'repos/{owner}/{repo}/releases/tags/{urllib.parse.quote(tag, safe="")}'
+            ], timeout=60))
+            asset = next(item for item in release['assets'] if item['name'] == name)
+            with temporary.open('wb') as out:
+                subprocess.run(['gh', 'api', f'repos/{owner}/{repo}/releases/assets/{asset["id"]}',
+                                '-H', 'Accept: application/octet-stream'],
+                               stdout=out, check=True, timeout=240)
+        else:
+            with urllib.request.urlopen(req, timeout=60) as response, temporary.open('wb') as out:
+                while block := response.read(1024 * 1024):
+                    out.write(block)
         if sha256(temporary) != spec['sha256']:
             raise RuntimeError(f'Checksum mismatch: {dest.name}')
         temporary.replace(dest)
