@@ -55,7 +55,7 @@ export class TurnController {
       if (revision !== this.revision || abort.signal.aborted || this.speaking) return;
       const action = raw.trim();
       if (!["LISTEN", "RESPOND", "ACKNOWLEDGE", "YIELD"].includes(action)) {
-        throw new Error("Flint returned an invalid turn decision.");
+        throw new Error("The controller returned an invalid turn decision.");
       }
       if (action !== "LISTEN") this.segments = "";
       this.options.decide(action as TurnAction, snapshot.transcript);

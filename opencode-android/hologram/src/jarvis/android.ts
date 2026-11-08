@@ -109,9 +109,10 @@ export function useAndroidJarvis() {
     let disposed = false;
     controller.current = new TurnController({
       context: () => ({ assistantSpeaking: talking.current, assistantReply: jarvis.get().transcript.slice(-2000) }),
-      request: (snapshot, signal) => requestTurn(snapshot, signal, androidToken),
+      request: (snapshot, signal) => requestTurn(snapshot, signal, androidToken, message => { if (!disposed) setError(message); }),
       decide: (action, transcript) => {
         if (disposed || !continuous.current) return;
+        setError(null);
         if (action === "LISTEN") { jarvis.hear(transcript); return; }
         voiceInProgress.current = false;
         if (action === "RESPOND") {
