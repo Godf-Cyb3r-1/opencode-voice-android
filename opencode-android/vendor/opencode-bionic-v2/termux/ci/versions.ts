@@ -398,7 +398,7 @@ async function main() {
   if (mode === "apply") {
     for (const c of drifted) c.fix?.()
     const wsChanged = await applyOpentuiWorkspaces(target)
-    const readmeChanged = applyReadme()
+    const readmeChanged = target === REPO_ROOT ? applyReadme() : false
     console.log(
       drifted.length
         ? `\nApplied ${drifted.length} fix(es) + refreshed ${wsChanged} workspace package.json file(s)${readmeChanged ? " + README.md" : ""}`

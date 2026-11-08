@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
+import urllib.parse
 import zipfile
 import gzip
 
@@ -30,9 +31,22 @@ def fetch(spec, dest):
     temporary = dest.with_suffix('.partial')
     req = urllib.request.Request(spec['url'], headers={'User-Agent': 'OpenCode-Android-build/0.1'})
     try:
-        with urllib.request.urlopen(req, timeout=60) as response, temporary.open('wb') as out:
-            while block := response.read(1024 * 1024):
-                out.write(block)
+        url = urllib.parse.urlparse(spec['url'])
+        parts = url.path.strip('/').split('/')
+        if os.environ.get('GH_TOKEN') and url.hostname == 'github.com' and len(parts) == 6 and parts[2:4] == ['releases', 'download']:
+            owner, repo, _, _, tag, name = map(urllib.parse.unquote, parts)
+            release = json.loads(subprocess.check_output([
+                'gh', 'api', f'repos/{owner}/{repo}/releases/tags/{urllib.parse.quote(tag, safe="")}'
+            ], timeout=60))
+            asset = next(item for item in release['assets'] if item['name'] == name)
+            with temporary.open('wb') as out:
+                subprocess.run(['gh', 'api', f'repos/{owner}/{repo}/releases/assets/{asset["id"]}',
+                                '-H', 'Accept: application/octet-stream'],
+                               stdout=out, check=True, timeout=240)
+        else:
+            with urllib.request.urlopen(req, timeout=60) as response, temporary.open('wb') as out:
+                while block := response.read(1024 * 1024):
+                    out.write(block)
         if sha256(temporary) != spec['sha256']:
             raise RuntimeError(f'Checksum mismatch: {dest.name}')
         temporary.replace(dest)
@@ -44,23 +58,10 @@ def fetch(spec, dest):
 def prepare(cache):
     lock = json.loads((ROOT / 'runtime/lock.json').read_text())
     bootstrap = fetch(lock['bootstrap'], cache / 'bootstrap-aarch64.zip')
-    package = fetch(lock['runtime'], cache / 'opencode.deb')
-    binary = cache / 'opencode'
-    if not binary.exists() or sha256(binary) != lock['runtime']['binary_sha256']:
-        proc = subprocess.Popen(['dpkg-deb', '--fsys-tarfile', str(package)], stdout=subprocess.PIPE)
-        found = False
-        with tarfile.open(fileobj=proc.stdout, mode='r|') as archive:
-            for member in archive:
-                if member.name.lstrip('./') == 'data/data/com.termux/files/usr/bin/opencode':
-                    with archive.extractfile(member) as source, binary.open('wb') as out:
-                        while block := source.read(1024 * 1024):
-                            out.write(block)
-                    found = True
-        proc.stdout.close()
-        if proc.wait() != 0 or not found:
-            raise RuntimeError('Could not extract the Android OpenCode binary')
-        if sha256(binary) != lock['runtime']['binary_sha256']:
-            raise RuntimeError('Extracted binary checksum mismatch')
+    binary = Path(os.environ['JARVIS_ANDROID_BINARY']).resolve()
+    if not binary.is_file():
+        raise RuntimeError('Build the pinned Jarvis Android binary first')
+    lock['runtime']['binary_sha256'] = sha256(binary)
     payload = ROOT / 'app/src/main/assets/engine'
     payload.mkdir(parents=True, exist_ok=True)
     with (payload / 'opencode.payload').open('wb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', mtime=0, compresslevel=6) as out, binary.open('rb') as source:
