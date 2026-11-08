@@ -212,6 +212,8 @@ public final class JarvisM9Activity extends Activity {
         return input;
     }
 
+    private Voice testVoice;
+
     private void settings() {
         editing = true;
         voice.stop();
@@ -225,8 +227,8 @@ public final class JarvisM9Activity extends Activity {
         language.setSelection("ta-IN".equals(voicePrefs.getString("language", "en-IN")) ? 1 : 0);
         form.addView(language);
         CheckBox conversation = new CheckBox(this);
-        conversation.setText("Live conversation (English, on device)");
-        conversation.setChecked(voicePrefs.getBoolean("conversation", true));
+        conversation.setText("Experimental offline English conversation");
+        conversation.setChecked(voicePrefs.getBoolean("conversation_verified", false));
         form.addView(conversation);
         CheckBox device = new CheckBox(this);
         device.setText("Android recognition fallback: on-device only");
@@ -241,6 +243,7 @@ public final class JarvisM9Activity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.addView(form);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Voice settings").setView(scroll)
+            .setNeutralButton("Test listening", (d, w) -> handler.post(this::listeningTest))
             .setNegativeButton("Cancel", null).setPositiveButton("Save", null).create();
         dialog.setOnDismissListener(d -> editing = false);
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -251,10 +254,76 @@ public final class JarvisM9Activity extends Activity {
             }
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return;
             voicePrefs.edit().putString("language", language.getSelectedItemPosition() == 1 ? "ta-IN" : "en-IN")
-                .putBoolean("conversation", conversation.isChecked()).putBoolean("offline", device.isChecked()).putBoolean("kaggle", kaggle.isChecked())
+                .putBoolean("conversation_verified", conversation.isChecked()).putBoolean("offline", device.isChecked()).putBoolean("kaggle", kaggle.isChecked())
                 .putString("wss", socket).putString("token", token.getText().toString().trim()).apply();
             dialog.dismiss();
         }));
+        dialog.show();
+    }
+
+    private void listeningTest() {
+        editing = true;
+        voice.stop();
+        emit("paused", "");
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(32, 16, 32, 16);
+        TextView instructions = new TextView(this);
+        instructions.setText("Compare the same sentence using each engine. Then try silence, fan noise, and a sentence with a pause. Results stay on this screen and are never sent as commands. Android recognition may use its online service.");
+        form.addView(instructions);
+        Spinner engine = new Spinner(this);
+        engine.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+            new String[]{"Android recognition (saved language)", "Offline English (experimental)"}));
+        form.addView(engine);
+        TextView output = new TextView(this);
+        output.setTextIsSelectable(true);
+        form.addView(output);
+        Button start = new Button(this);
+        start.setText("Start test");
+        form.addView(start);
+        Button stop = new Button(this);
+        stop.setText("Stop test");
+        form.addView(stop);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(form);
+        final long[] started = {0};
+        final StringBuilder history = new StringBuilder();
+        final boolean[] active = {false};
+        testVoice = new Voice(this, voicePrefs, (type, text) -> runOnUiThread(() -> {
+            if (!active[0] || "level".equals(type)) return;
+            long elapsed = android.os.SystemClock.elapsedRealtime() - started[0];
+            String line = elapsed + " ms  " + type + "  " + text;
+            if ("partial".equals(type)) output.setText(history.toString() + line);
+            else {
+                history.append(line).append("\n");
+                if (history.length() > 12000) history.delete(0, history.length() - 10000);
+                output.setText(history.toString());
+            }
+        }));
+        start.setOnClickListener(v -> {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                output.setText("Enable microphone permission in Android Settings, then start the test.");
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2);
+                return;
+            }
+            history.setLength(0);
+            started[0] = android.os.SystemClock.elapsedRealtime();
+            active[0] = true;
+            output.setText("Starting…");
+            if (testVoice != null) testVoice.testListening(engine.getSelectedItemPosition() == 1);
+        });
+        stop.setOnClickListener(v -> {
+            active[0] = false;
+            if (testVoice != null) testVoice.stop();
+            output.append("\nStopped");
+        });
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Listening test")
+            .setView(scroll).setPositiveButton("Close", null).create();
+        dialog.setOnDismissListener(d -> {
+            active[0] = false;
+            if (testVoice != null) { testVoice.close(); testVoice = null; }
+            editing = false;
+        });
         dialog.show();
     }
 
@@ -380,6 +449,7 @@ public final class JarvisM9Activity extends Activity {
     }
     @Override protected void onStop() {
         foreground = false;
+        if (testVoice != null) testVoice.stop();
         pendingMic = false;
         voice.stop();
         emit("paused", "");
@@ -387,6 +457,7 @@ public final class JarvisM9Activity extends Activity {
     }
     @Override protected void onDestroy() {
         voice.close();
+        if (testVoice != null) { testVoice.close(); testVoice = null; }
         handler.removeCallbacks(poll);
         if (fileResult != null) fileResult.onReceiveValue(null);
         web.destroy();

@@ -21,6 +21,7 @@ final class Voice implements AutoCloseable {
     private final KaggleVoice kaggle = new KaggleVoice();
     private SpeechRecognizer recognizer;
     private final JarvisStreamingStt streaming;
+    private boolean testing;
     private boolean playing;
     private boolean overlap;
     private String spoken = "";
@@ -67,19 +68,33 @@ final class Voice implements AutoCloseable {
 
     void listen() {
         stop();
-        if (prefs.getBoolean("conversation", true) && "en-IN".equals(prefs.getString("language", "en-IN"))) {
+        testing = false;
+        if (prefs.getBoolean("conversation_verified", false) && "en-IN".equals(prefs.getString("language", "en-IN"))) {
             emit.accept("notice", "Starting local conversation mode…");
             streaming.start();
         } else recognize(generation, "", 0);
     }
 
+    void testListening(boolean local) {
+        stop();
+        testing = true;
+        if (local) streaming.start();
+        else recognize(generation, "", 0);
+    }
+
     private void streamingFallback() {
+        if (testing) {
+            stop();
+            emit.accept("error", "Local recognizer failed to start or capture audio.");
+            return;
+        }
         stop();
         emit.accept("notice", "Local conversation mode unavailable. Using Android turn-based recognition.");
         recognize(generation, "", 0);
     }
 
     private void acceptStream(String text, boolean complete) {
+        if (testing) { emit.accept(complete ? "final" : "partial", text); return; }
         String words = normalize(text);
         if (words.isEmpty()) return;
         overlap |= playing || android.os.SystemClock.elapsedRealtime() - playbackEnded < 350;
@@ -152,7 +167,7 @@ final class Voice implements AutoCloseable {
                 @Override public void onPartialResults(Bundle data) {
                     if (!current()) return;
                     String text = hypothesis(data);
-                    if (!text.isEmpty() && (detectedSpeech || voicedFrames))
+                    if (!text.isEmpty() && (testing || detectedSpeech || voicedFrames))
                         emit.accept("partial", join(prefix, text));
                 }
                 @Override public void onResults(Bundle data) {
@@ -162,6 +177,11 @@ final class Voice implements AutoCloseable {
                     float[] scores = data.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES);
                     float confidence = scores == null || scores.length == 0 ? -1 : scores[0];
                     destroyRecognizer();
+                    if (testing) {
+                        emit.accept("confidence", confidence < 0 ? "Unavailable" : Float.toString(confidence));
+                        emit.accept("final", text);
+                        return;
+                    }
                     boolean speech = detectedSpeech || (voicedFrames && confidence >= 0.60f);
                     if (!speech || (confidence >= 0 && confidence < 0.30f)
                             || text.codePoints().noneMatch(Character::isLetterOrDigit)) {
@@ -181,6 +201,10 @@ final class Voice implements AutoCloseable {
                     if (!current()) return;
                     completed = true;
                     destroyRecognizer();
+                    if (testing) {
+                        emit.accept("error", "Recognizer ended with code " + code);
+                        return;
+                    }
                     if (code == SpeechRecognizer.ERROR_NO_MATCH || code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
                         retryRecognition(id, prefix, idleRetries);
                     else emit.accept("error", "Android speech recognition failed (" + code + "). Check the recognizer, language pack or network.");
