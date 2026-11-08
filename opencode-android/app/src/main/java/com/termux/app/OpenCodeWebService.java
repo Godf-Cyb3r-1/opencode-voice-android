@@ -148,9 +148,34 @@ public final class OpenCodeWebService extends Service {
         state = "starting";
         detail = "";
         foreground();
-        worker = new Thread(this::runEngine, "opencode-local-engine");
+        worker = new Thread(this::runSupervised, "opencode-local-engine");
         worker.start();
         return START_STICKY;
+    }
+
+    private void runSupervised() {
+        for (int attempt = 0; ; attempt++) {
+            long previousHealth = lastHealthy;
+            runEngine();
+            if (stopping || attempt >= 3 || lastHealthy == previousHealth || !"error".equals(state)) return;
+            // Recover from a running engine being killed, while leaving startup errors visible.
+            Process previous = engine;
+            if (previous != null && alive(previous)) return;
+            engine = null;
+            enginePid = 0;
+            state = "starting";
+            detail = "Restarting local engine…";
+            try {
+                protectBackground();
+                Thread.sleep(1000L << attempt);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            } finally {
+                releaseProtection();
+            }
+            if (stopping) return;
+        }
     }
 
     private void runEngine() {
@@ -204,6 +229,7 @@ public final class OpenCodeWebService extends Service {
             env.put("LANG", "C.UTF-8");
             env.put("TERM", "xterm-256color");
             env.put("OPENCODE_PASSWORD", preferences(this).getString("password", ""));
+            env.put("JARVIS_ANDROID_PROFILE", "1");
             env.put("JARVIS_ANDROID_URL", phoneBridge.url());
             env.put("JARVIS_ANDROID_TOKEN", phoneBridge.token);
             env.put("OPENCODE_CONFIG_CONTENT", "{\"default_agent\":\"jarvis\"}");
