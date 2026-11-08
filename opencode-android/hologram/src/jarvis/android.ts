@@ -24,6 +24,22 @@ export function useAndroidJarvis() {
   const [error, setError] = useState<string | null>(null);
   const [permission, setPermission] = useState<Permission | null>(null);
   const session = useRef<string | null>(localStorage.getItem("jarvis-hologram-session"));
+  const sessionCreation = useRef<Promise<string> | null>(null);
+  const sessionEpoch = useRef(0);
+  const ensureSession = async (): Promise<string> => {
+    if (session.current) return session.current;
+    if (sessionCreation.current) return sessionCreation.current;
+    const epoch = sessionEpoch.current;
+    const creation = apiPost<{ data: { id: string } }>("/session", { title: "Jarvis Hologram", agent: "jarvis" }).then(result => {
+      if (epoch !== sessionEpoch.current) throw new Error("Session changed.");
+      session.current = result.data.id;
+      localStorage.setItem("jarvis-hologram-session", result.data.id);
+      return result.data.id;
+    });
+    sessionCreation.current = creation;
+    try { return await creation; }
+    finally { if (sessionCreation.current === creation) sessionCreation.current = null; }
+  };
   const pending = useRef(false);
   const talking = useRef(false);
   const continuous = useRef(false);
@@ -60,12 +76,8 @@ export function useAndroidJarvis() {
     setError(null);
     jarvis.hydrate({ mode: "thinking", heard: text, transcript: "", utteranceId: jarvis.get().utteranceId + 1, streaming: false });
     try {
-      if (!session.current) {
-        const result = await apiPost<{ data: { id: string } }>("/session", { title: "Jarvis Hologram", agent: "jarvis" });
-        session.current = result.data.id;
-        localStorage.setItem("jarvis-hologram-session", result.data.id);
-      }
-      await apiPost(`/session/${encodeURIComponent(session.current)}/prompt`, { text });
+      const id = await ensureSession();
+      await apiPost(`/session/${encodeURIComponent(id)}/prompt`, { text });
       return true;
     } catch (cause) {
       if (cause && typeof cause === "object" && "status" in cause && cause.status === 404) {
@@ -109,7 +121,21 @@ export function useAndroidJarvis() {
     let disposed = false;
     controller.current = new TurnController({
       context: () => ({ assistantSpeaking: talking.current, assistantReply: jarvis.get().transcript.slice(-2000) }),
-      request: (snapshot, signal) => requestTurn(snapshot, signal, androidToken, message => { if (!disposed) setError(message); }),
+      request: async (snapshot, signal) => {
+        signal.throwIfAborted();
+        const id = await ensureSession();
+        signal.throwIfAborted();
+        try { return await requestTurn(snapshot, signal, androidToken, id); }
+        catch (error) {
+          signal.throwIfAborted();
+          if ((error as { status?: number })?.status !== 404 || session.current !== id) throw error;
+          session.current = null;
+          localStorage.removeItem("jarvis-hologram-session");
+          const replacement = await ensureSession();
+          signal.throwIfAborted();
+          return requestTurn(snapshot, signal, androidToken, replacement);
+        }
+      },
       decide: (action, transcript) => {
         if (disposed || !continuous.current) return;
         setError(null);
@@ -304,6 +330,8 @@ export function useAndroidJarvis() {
       controller.current?.reset();
       nativeVoice("cancel");
       micState(false);
+      sessionEpoch.current++;
+      sessionCreation.current = null;
       session.current = null;
       localStorage.removeItem("jarvis-hologram-session");
       jarvis.hydrate({ mode: "idle", heard: "", transcript: "", streaming: false });
