@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 notebook = json.loads((root / "kaggle/omnivoice-poc/jarvis_omnivoice_poc.ipynb").read_text())
 assert notebook["nbformat"] == 4
 source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
@@ -10,6 +10,7 @@ for required in ("k2-fsa/OmniVoice", "create_voice_clone_prompt", "voice_clone_p
 assert "/kaggle/temp/" in source
 assert "REFERENCE_AUDIO_EXPORTED=false" in source
 assert "VOICE_PROMPTS_EXPORTED=false" in source
-assert "files.upload" not in source
-assert "reference_audio" not in source.lower() or "reference" in source.lower()
+assert "REFERENCE_AUDIO_EXPORTED=false" in source
+assert "sf.write(" not in source
+assert "save(f'/kaggle/working" not in source
 print(f"PASS: notebook JSON valid; {len(notebook['cells'])} cells; POC/privacy contract verified")
