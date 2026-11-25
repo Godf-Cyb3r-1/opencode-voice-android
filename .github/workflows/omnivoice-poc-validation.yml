@@ -1,0 +1,32 @@
+name: OmniVoice POC validation
+
+on:
+  push:
+    branches:
+      - "feat/jarvis-omnivoice-kaggle-poc-20261126"
+    paths:
+      - "kaggle/omnivoice-poc/**"
+      - "tests/omnivoice_poc/**"
+      - ".github/workflows/omnivoice-poc-validation.yml"
+  pull_request:
+    paths:
+      - "kaggle/omnivoice-poc/**"
+      - "tests/omnivoice_poc/**"
+      - ".github/workflows/omnivoice-poc-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate notebook and metadata
+        run: |
+          python -m json.tool kaggle/omnivoice-poc/jarvis_omnivoice_poc.ipynb > /dev/null
+          python tests/omnivoice_poc/validate_notebook.py
