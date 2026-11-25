@@ -1,0 +1,13 @@
+{
+  "id": "KAGGLE_USERNAME/jarvis-omnivoice-reference-poc",
+  "title": "Jarvis OmniVoice Reference Voice POC",
+  "code_file": "jarvis_omnivoice_poc.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}
