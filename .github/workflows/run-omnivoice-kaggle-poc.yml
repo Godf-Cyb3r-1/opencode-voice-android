@@ -1,0 +1,74 @@
+name: Run OmniVoice Kaggle POC
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_dataset:
+        description: "Private Kaggle dataset slug (username/dataset-slug) containing mixed.wav, tamil.wav and english.wav"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  kaggle-poc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade kaggle
+      - name: Configure private kernel and credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          REFERENCE_DATASET: ${{ inputs.reference_dataset }}
+        run: |
+          test -n "$KAGGLE_USERNAME" || { echo "Missing Actions secret KAGGLE_USERNAME"; exit 1; }
+          test -n "$KAGGLE_KEY" || { echo "Missing Actions secret KAGGLE_KEY"; exit 1; }
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path("kaggle/omnivoice-poc/kernel-metadata.json")
+          data = json.loads(path.read_text())
+          data["id"] = f'{os.environ["KAGGLE_USERNAME"]}/jarvis-omnivoice-reference-poc'
+          data["dataset_sources"] = [os.environ["REFERENCE_DATASET"]]
+          path.write_text(json.dumps(data, indent=2))
+          PY
+          mkdir -p "$HOME/.kaggle"
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > "$HOME/.kaggle/kaggle.json"
+          chmod 600 "$HOME/.kaggle/kaggle.json"
+      - name: Push private Kaggle kernel
+        run: kaggle kernels push -p kaggle/omnivoice-poc
+      - name: Wait for Kaggle execution
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          set +e
+          for attempt in $(seq 1 60); do
+            status="$(kaggle kernels status "$KAGGLE_USERNAME/jarvis-omnivoice-reference-poc" 2>&1)"
+            echo "$status"
+            echo "$status" | grep -qi "complete" && exit 0
+            echo "$status" | grep -Eqi "error|failed" && exit 1
+            sleep 60
+          done
+          echo "Timed out waiting for Kaggle kernel. Check the private Kaggle notebook status."
+          exit 1
+      - name: Download metrics report only
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        run: |
+          mkdir -p kaggle-metrics
+          kaggle kernels output "$KAGGLE_USERNAME/jarvis-omnivoice-reference-poc" -p kaggle-metrics
+          test -s kaggle-metrics/jarvis_omnivoice_metrics.json
+          python -m json.tool kaggle-metrics/jarvis_omnivoice_metrics.json
+      - name: Upload privacy-safe metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-omnivoice-kaggle-metrics
+          path: kaggle-metrics/jarvis_omnivoice_metrics.json
+          if-no-files-found: error
+          retention-days: 30
